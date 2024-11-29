@@ -1,6 +1,4 @@
-import mysql.connector
-import json
-
+# coding=utf-8
 
 def get_stock_list(db_instance):
     # 连接到数据库
