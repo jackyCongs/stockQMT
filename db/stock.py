@@ -1,12 +1,12 @@
 # coding=utf-8
 
-def get_stock_list(db_instance):
+def get_stock_list(db):
     # 连接到数据库
-    conn = db_instance.get_connection()
+    conn = db.get_connection()
     cursor = conn.cursor()
     row_dict_list = []
     try:
-        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' order by id desc limit 10"
+        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' and target_worth_url != '' order by id desc limit 3"
         #query = "SELECT * FROM stock where is_etf = 1 order by id desc"
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -22,8 +22,8 @@ def get_stock_list(db_instance):
         conn.close()
 
 
-def get_stock_by_code(db_instance, code):
-    conn = db_instance.get_connection()
+def get_stock_by_code(db, code):
+    conn = db.get_connection()
     cursor = conn.cursor()
     try:
         query = "SELECT * FROM stock where code = %s and is_etf = 1 order by id desc"

@@ -56,3 +56,27 @@ def load_inner_stock(db_instance, inner_stock_infos):
             print(e)
     # 完成后关闭进度条
     pbar.close()
+
+
+def get_all_inner_stocks_code(db_instance):
+    stocks = stock_db.get_stock_list(db_instance)
+    codes = []
+    for stock in stocks:
+        if utils.enhance_stock_code(stock['code']) == stock['code']:
+            continue
+        codes.append(utils.enhance_stock_code(stock['code']))
+    return codes
+
+
+def get_all_target_index_code(target_index_infos):
+    codes = []
+    for code in target_index_infos:
+        if utils.enhance_stock_code(code, 'index') == code:
+            continue
+        codes.append(utils.enhance_stock_code(code, 'index'))
+    return codes
+
+def load_target_index(inner_stock_infos, target_index_infos):
+    for code in inner_stock_infos:
+        target_index_infos[code] = {}
+
