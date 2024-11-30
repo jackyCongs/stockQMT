@@ -6,7 +6,7 @@ def get_stock_list(db_instance):
     cursor = conn.cursor()
     row_dict_list = []
     try:
-        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' order by id desc"
+        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' order by id desc limit 10"
         #query = "SELECT * FROM stock where is_etf = 1 order by id desc"
         cursor.execute(query)
         rows = cursor.fetchall()

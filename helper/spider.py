@@ -1,3 +1,5 @@
+# coding=utf-8
+
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -6,7 +8,8 @@ import random
 
 
 # 获取场外基金最新的净值和净值时间
-def get_last_net_worth(url):
+def get_last_net_worth(code):
+    url = f"https://fund.eastmoney.com/{str(code)}.html"
     response = build_and_get(url)
     code = 200
     msg = "获取成功"
@@ -61,8 +64,8 @@ def build_and_get(url, stream = False):
         'User-Agent': random.choice(USER_AGENT_LIST)
     }
     if stream :
-        response = requests.get(url, headers=headers, timeout=2, stream=True)
+        response = requests.get(url, headers=headers, timeout=10, stream=True)
     else:
-        response = requests.get(url, headers=headers, timeout=2)
+        response = requests.get(url, headers=headers, timeout=10)
     response.encoding = 'utf-8'
     return response
