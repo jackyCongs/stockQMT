@@ -3,7 +3,7 @@
 from db import stock as stock_db
 from datetime import datetime
 from decimal import Decimal, getcontext
-from helper import spider
+from helper import spider, utils
 import logging
 from tqdm import tqdm
 
@@ -34,7 +34,10 @@ def load_inner_stock(db_instance, inner_stock_infos):
                 print(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
                 net_worth['net_worth'] = Decimal(net_worth['net_worth']) - Decimal(net_worth['bonus_money'])
 
-            inner_stock_infos[stock['code']] = {
+            # 如果增强前后值一样，说明是有问题的，直接省略掉
+            if utils.enhance_stock_code(stock['code']) == stock['code']:
+                continue
+            inner_stock_infos[utils.enhance_stock_code(stock['code'])] = {
                 'code': stock['code'],
                 'name': stock['name'],
                 'last_net_worth': Decimal(net_worth['net_worth']),
