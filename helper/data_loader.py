@@ -1,11 +1,13 @@
 # coding=utf-8
+import time
 
 from db import stock as stock_db
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 from helper import spider, utils
 import logging
 from tqdm import tqdm
+from xtquant import xtdata
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,7 +16,7 @@ logger = logging.getLogger(__name__)
 # 数据结构:
 # 【本方法中初始化】code、name、last_net_worth、last_net_worth_date、withdraw_commission_7rate、处理分红除权、target_index
 # 【在监听场内基金里初始化】买卖量价、持有数量、持有天数
-# 【在指数监听中初始化】 target_start, target_increase_rate, target_status【F未就绪，T已就绪】
+# 【在指数监听中初始化】 target_start, target_increase_rate,
 
 # 【以下是建议操作的策略】
 # 可买的价格 = (target_worth - 分红除权) * (1 + 目标指数的加权涨跌幅) * (1-withdraw_commission_7rate) * (溢价1-0.5) > 比卖价
@@ -42,13 +44,16 @@ def load_inner_stock(db_instance, inner_stock_infos):
                 'name': stock['name'],
                 'last_net_worth': Decimal(net_worth['net_worth']),
                 'last_net_worth_date': net_worth['net_worth_date'],
-                'withdraw_commission_7rate': stock['withdraw_commission_7rate'],
+                'withdraw_commission_7rate': Decimal(stock['withdraw_commission_7rate'] / 100),
                 'target_index': stock['target_worth_url'],
-                'target_status': False,
+                'hold_status': 0,# [0没用持有， 2买入中， 1持有中]
+                'hold_num': 0, #@todo 待添加
+                'hold_date': '', #@todo 待添加
                 'askPrice': [],
                 'askVol': [],
                 'bidPrice': [],
                 'bidVol': [],
+                'status': False,
             }
             pbar.update(1)
         except Exception as e:
@@ -68,15 +73,53 @@ def get_all_inner_stocks_code(db_instance):
     return codes
 
 
-def get_all_target_index_code(target_index_infos):
-    codes = []
-    for code in target_index_infos:
-        if utils.enhance_stock_code(code, 'index') == code:
-            continue
-        codes.append(utils.enhance_stock_code(code, 'index'))
-    return codes
+def get_all_target_index_code(inner_stock_infos):
+    return list(dict.fromkeys(
+        [utils.enhance_stock_code(inner_stock_infos[code]['target_index'], 'index')
+         for code in inner_stock_infos if
+         utils.enhance_stock_code(inner_stock_infos[code]['target_index'], 'index') != code]
+    ))
+
 
 def load_target_index(inner_stock_infos, target_index_infos):
+    pbar = tqdm(total=len(inner_stock_infos), desc="index loading...", mininterval=0.1)
+    relation = []
     for code in inner_stock_infos:
-        target_index_infos[code] = {}
+        relation = []
+        if inner_stock_infos[code]['target_index'] not in target_index_infos:
+            relation = [code]
+        else:
+            relation = target_index_infos[inner_stock_infos[code]['target_index']]['relation']
+            if code not in relation:
+                relation.append(code)
+        target_index_infos[inner_stock_infos[code]['target_index']] = {
+            'relation': relation,
+            'status': False,
+        }
+        pbar.update(1)
+    pbar.close()
 
+
+def get_previous_date():
+    today = datetime.now()
+    end_time = today.strftime('%Y%m%d')
+    # 计算15天前的日期
+    fifteen_days_ago = today - timedelta(days=15)
+    start_time = fifteen_days_ago.strftime('%Y%m%d')
+    dates = xtdata.get_trading_dates("SH", start_time, end_time)
+
+    # 最后一天是今日，如果今天是交易日
+    if datetime.fromtimestamp(dates[len(dates) - 1] / 1000).strftime('%Y%m%d') == end_time:
+        return datetime.fromtimestamp(dates[len(dates) - 2] / 1000).strftime('%Y-%m-%d')
+    # 最后一天不是交易日，直接输出最后一个交易日
+    return datetime.fromtimestamp(dates[len(dates) - 1] / 1000).strftime('%Y-%m-%d')
+
+
+# 获取策略买入时的动态溢价
+def get_premium(increase_rate):
+    increase_rate = increase_rate * 100
+    if increase_rate <= 0:
+        return Decimal(0.6)
+    elif increase_rate <= 2:
+        return Decimal(0.6) + Decimal(increase_rate / 4)
+    return Decimal(increase_rate / 1.5)

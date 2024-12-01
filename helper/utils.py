@@ -1,7 +1,7 @@
 # coding=utf-8
 
 
-def enhance_stock_code(code, type = 'stock'):
+def enhance_stock_code(code, type='stock'):
     if type == 'index':
         if code.startswith('000'):
             return f"{code}.SH"
@@ -18,3 +18,7 @@ def enhance_stock_code(code, type = 'stock'):
         return f"{code}.SZ"
     print(f"当前 code: {code}-{type}, 无对应来源")
     return code
+
+
+def purified_code(code):
+    return code.split('.')[0]
