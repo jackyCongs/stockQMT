@@ -100,7 +100,10 @@ def analysis_and_decision_mking(stock_code):
                 f"报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
             print(remark)
             order_seq = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
-            print(order_seq)
+            if order_seq:
+                print(f"order_seq: {order_seq}")
+            else:
+                print("下单失败")
 
 
 if __name__ == '__main__':
