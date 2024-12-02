@@ -12,4 +12,4 @@ def get_account():
 
 
 def get_path():
-    return StockAccount(config["ACCOUNT"]["path"])
+    return "E:\\QMT\\迅投极速策略交易系统交易终端 大同证券QMT实盘\\userdata_mini"
