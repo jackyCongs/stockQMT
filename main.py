@@ -98,6 +98,7 @@ def analysis_and_decision_mking(stock_code):
             # 下单
             remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                 f"报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
+            print(remark)
             order_seq = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
             print(order_seq)
 
