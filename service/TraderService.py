@@ -95,20 +95,20 @@ class TraderService:
         while True:
             connect_result = self.xt_trader.connect()
             if connect_result == 0:
-                print("trade connected success")
+                print(f"connect_result: {connect_result}, trade connected success")
                 break
             else:
-                print("trade connected FAILED!!! retrying.......")
+                print(f"connect_result: {connect_result}, trade connected FAILED!!! retrying.......")
                 time.sleep(1)
 
         # 订阅账户
         while True:
             subscribe_result = self.xt_trader.subscribe(self.account)
             if subscribe_result == 0:
-                print("account trading subscribed success")
+                print(f"subscribe_result: {subscribe_result}, account trading subscribed success")
                 break
             else:
-                print("account trading subscribed FAILED!!! retrying.......")
+                print(f"subscribe_result: {subscribe_result}, account trading subscribed FAILED!!! retrying.......")
                 time.sleep(1)
 
     # 异步下单
