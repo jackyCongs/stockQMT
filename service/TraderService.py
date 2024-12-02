@@ -49,8 +49,6 @@ class TraderService:
                 print("account trading subscribed FAILED!!! retrying.......")
                 time.sleep(3)
 
-    def close(self):
-        self.xt_trader.stop()
 
     # 异步下单
     def async_buy(self, stock_code, bid_price, bid_num, strategy_name, remark, inner_stock_infos):

@@ -124,4 +124,3 @@ if __name__ == '__main__':
         finally:
             # 释放线程池
             db.close()
-            traderService.close()
