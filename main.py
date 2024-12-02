@@ -9,6 +9,7 @@ import helper.spider as spider
 import helper.data_loader as data_loader
 from helper import utils
 from datetime import datetime, timedelta
+from service import TraderService
 
 
 # 全局变量
@@ -24,6 +25,8 @@ index_info = {}
 yesterday = data_loader.get_previous_date()
 # 单笔最大买入金额
 max_bid_money = 5000
+# 交易服务
+traderService = TraderService.TraderService
 
 
 def stock_handler(msgs):
@@ -92,11 +95,11 @@ def analysis_and_decision_mking(stock_code):
                 if bid_money > max_bid_money:
                     bid_num -= math.floor((bid_money - max_bid_money) / bid_price / 100)
         if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 0:
-            # 下单 @todo 下单程序，还要控制一下钱，不要超过5000，下载部分要加锁，还要考虑撤单逻辑
-            print(f"买入日志: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%,买入{stock_code}，报价{bid_price},{bid_num}手，"
-                  f"目前卖盘{stock_info['askPrice']}, 指数{index_info}")
-
-    #print(f"analysis. stock: {stock_info}, 'index: {index_info}")
+            # 下单
+            remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
+                f"报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
+            order_seq = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
+            print(order_seq)
 
 
 if __name__ == '__main__':
@@ -105,6 +108,7 @@ if __name__ == '__main__':
             db.initialize_pool()
             data_loader.load_inner_stock(db, inner_stock_infos)
             data_loader.load_target_index(inner_stock_infos, target_index_infos)
+            traderService = TraderService.TraderService()
 
             SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(db), callback=stock_handler)
             SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(inner_stock_infos),
@@ -116,3 +120,4 @@ if __name__ == '__main__':
         finally:
             # 释放线程池
             db.close()
+            traderService.xt_trader.stop()
