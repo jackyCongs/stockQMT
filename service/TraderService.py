@@ -70,9 +70,9 @@ class TradeCallback(XtQuantTraderCallback):
 
 
 class TraderService:
-    def __init__(self):
+    def __init__(self, session_id):
         self.path = account.get_path()
-        self.session_id = 1
+        self.session_id = session_id
         self.account = account.get_account()
         self.xt_trader = self._create_trader()
         self._connect()
@@ -123,7 +123,7 @@ class TraderService:
                 return
             inner_stock_infos[stock_code].update({'hold_status': 2})
             bid_num *= 100
-            return self.xt_trader.order_stock_async(
+            return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
                 strategy_name, remark
             )
