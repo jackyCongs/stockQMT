@@ -117,9 +117,9 @@ def get_previous_date():
 
 # 获取策略买入时的动态溢价
 def get_premium(increase_rate):
-    increase_rate = increase_rate * 100
+    increase_rate = increase_rate * Decimal(100)
     if increase_rate <= 0:
         return Decimal(0.6)
     elif increase_rate <= 2:
-        return Decimal(0.6) + Decimal(increase_rate / 4)
-    return Decimal(increase_rate / 1.5)
+        return Decimal(0.6) + Decimal(increase_rate / Decimal(4))
+    return Decimal(increase_rate / Decimal(1.5))

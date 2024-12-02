@@ -70,14 +70,21 @@ def analysis_and_decision_mking(stock_code):
 
     appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] -
                                                       (stock_info['withdraw_commission_7rate'])), 6))
+    # @todo 测试，把估值拉的高高的
+    if stock_code == "160135.SZ":
+        appraisal += Decimal(0.5)
+    #print(f"{stock_code}-{appraisal}, ask:{stock_info['askPrice']}")
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
         bid_price = 0
         bid_num = 0
         bid_money = 0
-        premium = data_loader.get_premium(index_info['increase_rate'])
+        premium_threshold = data_loader.get_premium(index_info['increase_rate'])
+        print(premium_threshold)
+        premium = 0
         for i, price in enumerate(stock_info['askPrice']):
-            if (appraisal - Decimal(price)) / Decimal(price) >= premium and bid_money <= max_bid_money:
+            premium = round((appraisal - Decimal(price)) / Decimal(price) * 100, 4)
+            if premium >= premium_threshold and bid_money <= max_bid_money:
                 bid_price = round(price, 6)
                 bid_num += stock_info['askVol'][i]
                 bid_money += bid_price * bid_num * 100
@@ -86,7 +93,7 @@ def analysis_and_decision_mking(stock_code):
                     bid_num -= math.floor((bid_money - max_bid_money) / bid_price / 100)
         if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 0:
             # 下单 @todo 下单程序，还要控制一下钱，不要超过5000，下载部分要加锁，还要考虑撤单逻辑
-            print(f"买入日志: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},买入{stock_code}，报价{bid_price},{bid_num}手，"
+            print(f"买入日志: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%,买入{stock_code}，报价{bid_price},{bid_num}手，"
                   f"目前卖盘{stock_info['askPrice']}, 指数{index_info}")
 
     #print(f"analysis. stock: {stock_info}, 'index: {index_info}")
