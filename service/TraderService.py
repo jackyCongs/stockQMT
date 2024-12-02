@@ -90,16 +90,16 @@ class TraderService:
 
     def _connect(self):
         # 建立交易连接
+        self.xt_trader.register_callback(TradeCallback)
+        self.xt_trader.start()
         while True:
-            self.xt_trader.register_callback(TradeCallback)
-            self.xt_trader.start()
             connect_result = self.xt_trader.connect()
             if connect_result == 0:
                 print("trade connected success")
                 break
             else:
                 print("trade connected FAILED!!! retrying.......")
-                time.sleep(3)
+                time.sleep(1)
 
         # 订阅账户
         while True:
@@ -109,7 +109,7 @@ class TraderService:
                 break
             else:
                 print("account trading subscribed FAILED!!! retrying.......")
-                time.sleep(3)
+                time.sleep(1)
 
     # 异步下单
     def async_buy(self, stock_code, bid_price, bid_num, strategy_name, remark, inner_stock_infos):
