@@ -74,9 +74,11 @@ def analysis_and_decision_mking(stock_code):
 
     appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] -
                                                       (stock_info['withdraw_commission_7rate'])), 6))
-    # @todo 测试，把估值拉的高高的
+    # @todo 测试，把askPrice降的低低的
     if stock_code == "160135.SZ":
-        appraisal += Decimal(0.5)
+        for i, price in enumerate(stock_info['askPrice']):
+            stock_info['askPrice'][i] = round(stock_info['askPrice'][i]/2, 5)
+
     #print(f"{stock_code}-{appraisal}, ask:{stock_info['askPrice']}")
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
