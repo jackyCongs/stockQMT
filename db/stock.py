@@ -7,8 +7,8 @@ def get_stock_list(db):
     row_dict_list = []
     try:
         #query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' and target_worth_url REGEXP '^[0-9]+$' order by id desc limit 3"
-        #query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' and target_worth_url REGEXP '^[0-9]+$'"
-        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' and target_worth_url REGEXP '^[0-9]+$' and code in(160135, 160631)"
+        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' and target_worth_url REGEXP '^[0-9]+$'"
+        #query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = 'lof' and target_worth_url REGEXP '^[0-9]+$' and code in(160135, 160631)"
         cursor.execute(query)
         rows = cursor.fetchall()
         column_names = [description[0] for description in cursor.description]

@@ -101,9 +101,7 @@ def analysis_and_decision_mking(stock_code):
             remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                 f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
             print(remark)
-            #order_id = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
-            # @todo 先用伪装 order_id 代替
-            order_id = "1231231"
+            order_id = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
             if order_id:
                 print(f"order_id: {order_id}")
                 strategy_record.add(db, order_id, "折价套利", stock_code, bid_price, bid_num*100, index_info['current'], remark)
