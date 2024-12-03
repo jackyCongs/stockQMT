@@ -12,7 +12,7 @@ def add(db,order_id,strategy_name,stock_code, bid_price, bid_num, target_start):
                   "values "
                   "(%s, %s,%s, CURDATE(),%s, %s, %s, %s)")
 
-        cursor.execute(update, (order_id,strategy_name,stock_code,bid_price,bid_num,target_start, round(time.time()/1000)))
+        cursor.execute(update, (order_id,strategy_name,stock_code,bid_price,bid_num,target_start, round(time.time())))
         conn.commit()
     except Exception as e:
         print(e)
