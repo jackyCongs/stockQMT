@@ -1,5 +1,6 @@
 # coding=utf-8
 
+import time
 
 def enhance_stock_code(code, type='stock'):
     if type == 'index':
@@ -22,3 +23,12 @@ def enhance_stock_code(code, type='stock'):
 
 def purified_code(code):
     return code.split('.')[0]
+
+
+def should_print(gap):
+    current_time = time.time()
+    global last_print_time
+    if current_time - last_print_time >= gap:
+        last_print_time = current_time
+        return True
+    return False

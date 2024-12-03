@@ -27,6 +27,7 @@ max_bid_money = 5000
 # 交易服务
 traderService = None
 session_id = round(time.time())
+last_print_time = time.time()
 
 
 def stock_handler(msgs):
@@ -82,7 +83,8 @@ def analysis_and_decision_mking(stock_code):
 
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
-        print(f"{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal-Decimal(stock_info['askPrice'][0]))/Decimal(stock_info['askPrice'][0]) * Decimal(100),4)}%")
+        if utils.should_print(60):
+            print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal-Decimal(stock_info['askPrice'][0]))/Decimal(stock_info['askPrice'][0]) * Decimal(100),4)}%")
         bid_price = 0
         bid_num = 0
         bid_money = 0
