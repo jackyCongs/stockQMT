@@ -4,6 +4,7 @@ import time
 from decimal import Decimal
 from xtquant import xtdata
 from db.db_pool import DBPool
+from db import strategy_record
 import helper.data_loader as data_loader
 from helper import utils
 from datetime import datetime
@@ -103,6 +104,7 @@ def analysis_and_decision_mking(stock_code):
             order_id = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
             if order_id:
                 print(f"order_id: {order_id}")
+                strategy_record.add(db, order_id, "折价套利", stock_code, bid_price, bid_num*100, index_info['current'])
             else:
                 print("下单失败")
 
