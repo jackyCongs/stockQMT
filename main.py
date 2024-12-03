@@ -76,9 +76,9 @@ def analysis_and_decision_mking(stock_code):
     appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] -
                                                       (stock_info['withdraw_commission_7rate'])), 6))
     # @todo 测试，把askPrice降的低低的
-    if stock_code == "160135.SZ" or stock_code == "160631.SZ":
-        for i, price in enumerate(stock_info['askPrice']):
-            stock_info['askPrice'][i] = round(stock_info['askPrice'][i]/5, 5)
+    # if stock_code == "160135.SZ" or stock_code == "160631.SZ":
+    #     for i, price in enumerate(stock_info['askPrice']):
+    #         stock_info['askPrice'][i] = round(stock_info['askPrice'][i]/5, 5)
 
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
@@ -101,10 +101,12 @@ def analysis_and_decision_mking(stock_code):
             remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                 f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
             print(remark)
-            order_id = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
+            #order_id = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
+            # @todo 先用伪装 order_id 代替
+            order_id = "1231231"
             if order_id:
                 print(f"order_id: {order_id}")
-                strategy_record.add(db, order_id, "折价套利", stock_code, bid_price, bid_num*100, index_info['current'])
+                strategy_record.add(db, order_id, "折价套利", stock_code, bid_price, bid_num*100, index_info['current'], remark)
             else:
                 print("下单失败")
 

@@ -2,17 +2,17 @@
 import time
 
 
-def add(db,order_id,strategy_name,stock_code, bid_price, bid_num, target_start):
+def add(db,order_id,strategy_name,stock_code, bid_price, bid_num, target_start, remark):
     # 连接到数据库
     conn = db.get_connection()
     cursor = conn.cursor()
     try:
         update = ("insert into strategy_records(`order_id`, `strategy_name`,`stock_code`,`start_date`,`start_price`,"
-                  "`num`,`start_target`,`created_at`) "
+                  "`num`,`start_target`,`created_at`,`remark`) "
                   "values "
-                  "(%s, %s,%s, CURDATE(),%s, %s, %s, %s)")
+                  "(%s, %s,%s, CURDATE(),%s, %s, %s, %s, %s)")
 
-        cursor.execute(update, (order_id,strategy_name,stock_code,bid_price,bid_num,target_start, round(time.time())))
+        cursor.execute(update, (order_id,strategy_name,stock_code,bid_price,bid_num,target_start, round(time.time()), remark))
         conn.commit()
     except Exception as e:
         print(e)
