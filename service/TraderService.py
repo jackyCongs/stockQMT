@@ -123,12 +123,11 @@ class TraderService:
                 return
             inner_stock_infos[stock_code].update({'hold_status': 2})
             bid_num *= 100
-            # return self.xt_trader.order_stock(
-            #     self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
-            #     strategy_name, remark
-            # )
-            # @todo 先用假的代替，并不真实下单，明天再下单
-            return '123123'
+            return self.xt_trader.order_stock(
+                self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
+                strategy_name, remark
+            )
+            #return '123123'
         finally:
             lock.release()
 
