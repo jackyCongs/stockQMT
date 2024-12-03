@@ -68,8 +68,9 @@ def analysis_and_decision_mking(stock_code):
         return
 
     if stock_info['last_net_worth_date'] != yesterday:
-        pass
-        #return 白天可以用，晚上就不行了
+        #pass
+        # 白天可以用，晚上就不行了
+        return
 
     appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] -
                                                       (stock_info['withdraw_commission_7rate'])), 6))
