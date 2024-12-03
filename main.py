@@ -31,7 +31,7 @@ session_id = round(time.time())
 
 def stock_handler(msgs):
     for code in msgs:
-        print(f"订阅消息: stock-  {msgs[code]}")
+        #print(f"订阅消息: stock-  {msgs[code]}")
         inner_stock_infos[code].update({
             'askPrice': msgs[code]['askPrice'],
             'askVol': msgs[code]['askVol'],
@@ -46,7 +46,7 @@ def stock_handler(msgs):
 
 def index_handler(msgs):
     for code in msgs:
-        print(f"订阅消息: index-  {msgs[code]}")
+        #print(f"订阅消息: index-  {msgs[code]}")
         target_index_infos[utils.purified_code(code)].update({
             'start': msgs[code]['lastClose'],
             'current': msgs[code]['lastPrice'],
@@ -82,7 +82,7 @@ def analysis_and_decision_mking(stock_code):
 
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
-        print(f"估值: {appraisal}, 卖一报价: {stock_info['askPrice'][0]}, 折价率: {round((appraisal-stock_info['askPrice'][0])/stock_info['askPrice'][0] * 100,4)}%")
+        print(f"估值: {appraisal}, 卖一报价: {stock_info['askPrice'][0]}, 折价率: {round((appraisal-Decimal(stock_info['askPrice'][0]))/Decimal(stock_info['askPrice'][0]) * Decimal(100),4)}%")
         bid_price = 0
         bid_num = 0
         bid_money = 0
