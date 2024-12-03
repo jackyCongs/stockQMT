@@ -10,7 +10,7 @@ def add(db,order_id,strategy_name,stock_code, bid_price, bid_num, target_start):
         update = ("insert into strategy_records(`order_id`, `strategy_name`,`stock_code`,`start_date`,`start_price`,"
                   "`num`,`start_target`,`created_at`) "
                   "values "
-                  "(%s, %s,%s, CURDATE(),%s, %s, %s)")
+                  "(%s, %s,%s, CURDATE(),%s, %s, %s, %s)")
 
         cursor.execute(update, (order_id,strategy_name,stock_code,bid_price,bid_num,target_start, round(time.time()/1000)))
         conn.commit()
