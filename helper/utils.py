@@ -2,6 +2,9 @@
 
 import time
 
+last_print_time = time.time()
+
+
 def enhance_stock_code(code, type='stock'):
     if type == 'index':
         if code.startswith('000'):

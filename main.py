@@ -27,7 +27,6 @@ max_bid_money = 5000
 # 交易服务
 traderService = None
 session_id = round(time.time())
-last_print_time = time.time()
 
 
 def stock_handler(msgs):
