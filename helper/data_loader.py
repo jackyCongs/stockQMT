@@ -9,7 +9,10 @@ import logging
 from tqdm import tqdm
 from xtquant import xtdata
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO,
+                    format='%(message)s',
+                    filename='logs/app.log',
+                    filemode='a')
 logger = logging.getLogger(__name__)
 
 
@@ -29,11 +32,11 @@ def load_inner_stock(db_instance, inner_stock_infos):
         try:
             net_worth = spider.get_last_net_worth(stock['code'])
             if net_worth['code'] != 200:
-                print(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
+                logger.error(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
                 continue
             if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == datetime.now().strftime("%Y-%m-%d") \
                     and net_worth['bonus_date'] != net_worth['bonus_date']:
-                print(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
+                logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
                 net_worth['net_worth'] = Decimal(net_worth['net_worth']) - Decimal(net_worth['bonus_money'])
 
             # 如果增强前后值一样，说明是有问题的，直接省略掉
@@ -58,7 +61,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
             pbar.update(1)
         except Exception as e:
             pbar.update(1)
-            print(e)
+            logger.error(e)
     # 完成后关闭进度条
     pbar.close()
 

@@ -1,6 +1,5 @@
 # coding=utf-8
 import math
-import time
 from decimal import Decimal
 from xtquant import xtdata
 from db.db_pool import DBPool
@@ -9,6 +8,14 @@ import helper.data_loader as data_loader
 from helper import utils
 from datetime import datetime
 from service import TraderService
+import logging
+import time
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(message)s',
+                    filename='logs/app.log',
+                    filemode='a')
+logger = logging.getLogger(__name__)
 
 # 全局变量
 xtdata.enable_hello = False
@@ -30,7 +37,7 @@ session_id = round(time.time())
 
 def stock_handler(msgs):
     for code in msgs:
-        #print(f"订阅消息: stock-  {msgs[code]}")
+        # logging.info(f"订阅消息: stock-  {msgs[code]}")
         inner_stock_infos[code].update({
             'askPrice': msgs[code]['askPrice'],
             'askVol': msgs[code]['askVol'],
@@ -38,14 +45,14 @@ def stock_handler(msgs):
             'bidVol': msgs[code]['bidVol'],
             'status': True,
         })
-        # print(f"stock_handler-{inner_stock_infos[code]}")
+        # logging.info(f"stock_handler-{inner_stock_infos[code]}")
         # 分析关联的code
         analysis_and_decision_mking(code)
 
 
 def index_handler(msgs):
     for code in msgs:
-        #print(f"订阅消息: index-{code},  {msgs[code]}")
+        #logging.info(f"订阅消息: index-{code},  {msgs[code]}")
         if msgs[code]['lastClose'] == 0:
             continue
         target_index_infos[utils.purified_code(code)].update({
@@ -55,7 +62,7 @@ def index_handler(msgs):
                 round((msgs[code]['lastPrice'] - msgs[code]['lastClose']) / msgs[code]['lastClose'], 6)),
             'status': True,
         })
-        # print(f"index_handler-{msgs[code]}")
+        # logging.info(f"index_handler-{msgs[code]}")
         # 逐个分析关联的code
         for stock_code in target_index_infos[utils.purified_code(code)]['relation']:
             analysis_and_decision_mking(stock_code)
@@ -85,7 +92,7 @@ def analysis_and_decision_mking(stock_code):
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
         if utils.should_print(60):
-            print(
+            logging.info(
                 f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
         bid_price = 0
         bid_num = 0
@@ -108,14 +115,14 @@ def analysis_and_decision_mking(stock_code):
             # 下单
             remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                      f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
-            print(remark)
+            logging.info(remark)
             order_id = traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark, inner_stock_infos)
             if order_id:
-                print(f"order_id: {order_id}")
+                logging.info(f"order_id: {order_id}")
                 strategy_record.add(db, order_id, "折价套利", stock_code, bid_price, bid_num * 100,
                                     index_info['current'], remark)
             else:
-                print("下单失败")
+                logging.error("下单失败")
 
 
 if __name__ == '__main__':
@@ -129,10 +136,10 @@ if __name__ == '__main__':
             SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(db), callback=stock_handler)
             SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(inner_stock_infos),
                                                 callback=index_handler)
-            print(f"订阅成功: {SId1}, {SId2}\r")
+            logging.info(f"订阅成功: {SId1}, {SId2}\r")
             xtdata.run()
         except Exception as e:
-            print(e)
+            logging.error(e)
         finally:
             # 释放线程池
             db.close()

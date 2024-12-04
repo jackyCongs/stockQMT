@@ -1,8 +1,14 @@
 # coding=utf-8
 
 import time
+import logging
 
 last_print_time = time.time()
+logging.basicConfig(level=logging.INFO,
+                    format='%(message)s',
+                    filename='logs/app.log',
+                    filemode='a')
+logger = logging.getLogger(__name__)
 
 
 def enhance_stock_code(code, type='stock'):
@@ -11,7 +17,7 @@ def enhance_stock_code(code, type='stock'):
             return f"{code}.SH"
         if code.startswith('399'):
             return f"{code}.SZ"
-        print(f"当前 code: {code}-{type}, 无对应来源")
+        logger.info(f"当前 code: {code}-{type}, 无对应来源")
         return code
     # 上证
     if len(code) == 6 and (code.startswith('6') or code.startswith('900') or code.startswith('5')):
@@ -20,7 +26,7 @@ def enhance_stock_code(code, type='stock'):
     elif len(code) == 6 and (code.startswith('0') or code.startswith('3') or code.startswith('158')
                              or code.startswith('159') or code.startswith('16')):
         return f"{code}.SZ"
-    print(f"当前 code: {code}-{type}, 无对应来源")
+    logger.info(f"当前 code: {code}-{type}, 无对应来源")
     return code
 
 
