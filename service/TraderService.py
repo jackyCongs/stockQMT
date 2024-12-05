@@ -5,6 +5,13 @@ from xtquant import xtconstant
 from service import account
 import time
 import threading
+import logging
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(message)s',
+                    filename='logs/app.log',
+                    filemode='a')
+logger = logging.getLogger(__name__)
 
 
 class TradeCallback(XtQuantTraderCallback):
@@ -13,7 +20,7 @@ class TradeCallback(XtQuantTraderCallback):
         连接断开
         :return:
         """
-        print("connection lost")
+        logger.info("connection lost")
 
     def on_stock_order(self, order):
         """
@@ -21,8 +28,8 @@ class TradeCallback(XtQuantTraderCallback):
         :param order: XtOrder对象
         :return:
         """
-        print("on order callback:")
-        print(order.stock_code, order.order_status, order.order_sysid)
+        logger.info("on order callback:")
+        logger.info(order.stock_code, order.order_status, order.order_sysid)
 
     def on_stock_trade(self, trade):
         """
@@ -30,8 +37,8 @@ class TradeCallback(XtQuantTraderCallback):
         :param trade: XtTrade对象
         :return:
         """
-        print("on trade callback")
-        print(trade.account_id, trade.stock_code, trade.order_id)
+        logger.info("on trade callback")
+        logger.info(trade.account_id, trade.stock_code, trade.order_id)
 
     def on_order_error(self, order_error):
         """
@@ -39,8 +46,8 @@ class TradeCallback(XtQuantTraderCallback):
         :param order_error:XtOrderError 对象
         :return:
         """
-        print("on order_error callback")
-        print(order_error.order_id, order_error.error_id, order_error.error_msg)
+        logger.info("on order_error callback")
+        logger.info(order_error.order_id, order_error.error_id, order_error.error_msg)
 
     def on_cancel_error(self, cancel_error):
         """
@@ -48,8 +55,8 @@ class TradeCallback(XtQuantTraderCallback):
         :param cancel_error: XtCancelError 对象
         :return:
         """
-        print("on cancel_error callback")
-        print(cancel_error.order_id, cancel_error.error_id, cancel_error.error_msg)
+        logger.info("on cancel_error callback")
+        logger.info(cancel_error.order_id, cancel_error.error_id, cancel_error.error_msg)
 
     def on_order_stock_async_response(self, response):
         """
@@ -57,16 +64,16 @@ class TradeCallback(XtQuantTraderCallback):
         :param response: XtOrderResponse 对象
         :return:
         """
-        print("on_order_stock_async_response")
-        print(response.account_id, response.order_id, response.seq)
+        logger.info("on_order_stock_async_response")
+        logger.info(response.account_id, response.order_id, response.seq)
 
     def on_account_status(self, status):
         """
         :param response: XtAccountStatus 对象
         :return:
         """
-        print("on_account_status")
-        print(status.account_id, status.account_type, status.status)
+        logger.info("on_account_status")
+        logger.info(status.account_id, status.account_type, status.status)
 
 
 class TraderService:
@@ -95,20 +102,20 @@ class TraderService:
         while True:
             connect_result = self.xt_trader.connect()
             if connect_result == 0:
-                print(f"connect_result: {connect_result}, trade connected success")
+                logger.info(f"connect_result: {connect_result}, trade connected success")
                 break
             else:
-                print(f"connect_result: {connect_result}, trade connected FAILED!!! retrying.......")
+                logger.info(f"connect_result: {connect_result}, trade connected FAILED!!! retrying.......")
                 time.sleep(1)
 
         # 订阅账户
         while True:
             subscribe_result = self.xt_trader.subscribe(self.account)
             if subscribe_result == 0:
-                print(f"subscribe_result: {subscribe_result}, account trading subscribed success")
+                logger.info(f"subscribe_result: {subscribe_result}, account trading subscribed success")
                 break
             else:
-                print(f"subscribe_result: {subscribe_result}, account trading subscribed FAILED!!! retrying.......")
+                logger.info(f"subscribe_result: {subscribe_result}, account trading subscribed FAILED!!! retrying.......")
                 time.sleep(1)
 
     # 异步下单
