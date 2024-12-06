@@ -110,6 +110,7 @@ def analysis_and_decision_mking(stock_code):
         if utils.should_print(60):
             logging.info(
                 f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
+            data_loader.print_top_variance(inner_stock_infos)
 
 
         # 可买的数量太少也放弃出价
