@@ -130,9 +130,10 @@ def get_premium(increase_rate):
 
 
 def print_top_variance(inner_stock_infos):
-    sorted_data = sorted(inner_stock_infos, key=lambda x: x['premium'], reverse=True)
+    sorted_data = {key: value for key, value in sorted(inner_stock_infos.items(), key=lambda x: x[1]['premium'], reverse=True)}
     i = 0
-    for stock_info in sorted_data:
+    for stock_code in sorted_data:
+        stock_info = sorted_data[stock_code]
         if i >= 2:
             break
         logger.info(f"top2: {stock_info['name']}-{stock_info['code']}, 折价率{stock_info['premium']}%")
