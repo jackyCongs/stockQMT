@@ -137,4 +137,5 @@ def print_top_variance(inner_stock_infos):
         if i >= 2:
             break
         logger.info(f"top2: {stock_info['name']}-{stock_info['code']}, 折价率{stock_info['premium']}%")
+        i += 1
 
