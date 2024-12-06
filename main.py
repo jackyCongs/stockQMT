@@ -22,10 +22,8 @@ xtdata.enable_hello = False
 db = DBPool()
 # 等待被初始化的全局场内基金
 inner_stock_infos = {}
-stock_info = {}
 # 等待被初始化的全局指数
 target_index_infos = {}
-index_info = {}
 # 上一个交易日
 yesterday = data_loader.get_previous_date()
 # 单笔最大买入金额
@@ -70,7 +68,6 @@ def index_handler(msgs):
 
 # 目前只考虑买，先不考虑卖的问题
 def analysis_and_decision_mking(stock_code):
-    global stock_info, index_info
     stock_info = inner_stock_infos[stock_code]
     index_info = target_index_infos[stock_info['target_index']]
     # 双方未就绪，不处理
@@ -91,16 +88,17 @@ def analysis_and_decision_mking(stock_code):
 
     # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
     if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
-        if utils.should_print(60):
-            logging.info(
-                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
+
         bid_price = 0
         bid_num = 0
         bid_money = 0
         premium_threshold = data_loader.get_premium(index_info['increase_rate'])
         premium = 0
         for i, price in enumerate(stock_info['askPrice']):
-            premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
+            # 计算一下当前卖一的折价率
+            if i == 0:
+                premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
+            inner_stock_infos[stock_code].update({'premium': premium})
             if premium >= premium_threshold and bid_money <= max_bid_money:
                 bid_price = round(price, 6)
                 bid_num += stock_info['askVol'][i]
@@ -108,6 +106,12 @@ def analysis_and_decision_mking(stock_code):
                 # 如果超过了最大单笔限上额，减去一点
                 if bid_money > max_bid_money:
                     bid_num -= math.floor((bid_money - max_bid_money) / bid_price / 100)
+
+        if utils.should_print(60):
+            logging.info(
+                f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
+
+
         # 可买的数量太少也放弃出价
         if bid_money < 2000:
             return

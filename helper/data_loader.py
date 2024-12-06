@@ -52,6 +52,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
                 'hold_status': 0,# [0没用持有， 2买入中， 1持有中]
                 'hold_num': 0, #@todo 待添加
                 'hold_date': '', #@todo 待添加
+                'premium': 0,
                 'askPrice': [],
                 'askVol': [],
                 'bidPrice': [],
@@ -126,3 +127,13 @@ def get_premium(increase_rate):
     elif increase_rate <= 2:
         return Decimal(0.6) + Decimal(increase_rate / Decimal(4))
     return Decimal(increase_rate / Decimal(1.5))
+
+
+def print_top_variance(inner_stock_infos):
+    sorted_data = sorted(inner_stock_infos, key=lambda x: x['premium'], reverse=True)
+    i = 0
+    for stock_info in sorted_data:
+        if i >= 2:
+            break
+        logger.info(f"top2: {stock_info['name']}-{stock_info['code']}, 折价率{stock_info['premium']}%")
+
