@@ -120,12 +120,12 @@ def get_previous_date():
 
 
 # 获取策略买入时的动态溢价
-def get_premium(increase_rate):
+def get_premium(increase_rate, base_premium_threshold):
     increase_rate = increase_rate * Decimal(100)
     if increase_rate <= 0:
-        return Decimal(0.6)
+        return Decimal(base_premium_threshold)
     elif increase_rate <= 2:
-        return Decimal(0.6) + Decimal(increase_rate / Decimal(4))
+        return Decimal(base_premium_threshold) + Decimal(increase_rate / Decimal(4))
     return Decimal(increase_rate / Decimal(1.5))
 
 
@@ -137,5 +137,7 @@ def print_top_variance(inner_stock_infos):
         if i >= 2:
             break
         logger.info(f"top2: {stock_info['name']}-{stock_info['code']}, 折价率{stock_info['premium']}%")
+        # 输出信息后归零，防止出现 spinning 的情况
+        inner_stock_infos[stock_code].update({'premium': 0})
         i += 1
 
