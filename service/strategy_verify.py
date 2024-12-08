@@ -26,6 +26,8 @@ class ThreadRunner(threading.Thread):
             stock_day_start = market_data.find_next_data(self.db, stock_code, start_time)
             if stock_day_start is None:
                 break
+            if stock_day_start['time'] >= '20240930':
+                break
             limit_up_price = round(stock_day_start['preClose'] * 1.1, 2)
             stock_day_end = market_data.find_data(self.db, stock_code, stock_day_start['time'][:-4] + "1500")
 
@@ -42,7 +44,7 @@ class ThreadRunner(threading.Thread):
             start_time = stock_day_end['time']
 
         # 将每个线程的结果存储到result_map中
-        self.result_map[self.code] = (current_capital, transaction_count)
+        self.result_map[stock_code] = (current_capital, transaction_count)
 
 
 def run(db):
@@ -60,7 +62,7 @@ def run(db):
         threads.append(thread)
         thread.start()
 
-        if len(threads) >= 20:
+        if len(threads) >= 100:
             for t in threads:
                 t.join()
             threads = []
@@ -83,3 +85,4 @@ def run(db):
 
     print(f"总交易{total_transaction_count}次，有交易的stock数量{valid_stock_count}, 综合平均收益率: "
           f"{round((total_value - (valid_stock_count * 10000)) / (valid_stock_count * 10000) * 100, 4)}%")
+    exit()

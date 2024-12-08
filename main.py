@@ -25,11 +25,10 @@ if __name__ == '__main__':
     while True:
         try:
             db.initialize_pool()
-            # traderService = TraderService.TraderService(session_id)
+            traderService = TraderService.TraderService(session_id)
             # 策略1启动
-            # Strategy1.Strategy1(db, traderService).run()
-            strategy_verify.run(db)
-            # xtdata.run()
+            Strategy1.Strategy1(db, traderService).run()
+            xtdata.run()
         except Exception as e:
             e.with_traceback()
             logging.error(e)
