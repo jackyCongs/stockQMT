@@ -2,7 +2,7 @@
 
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import TraderService, history_download
+from service import TraderService, strategy_verify
 import logging
 import time
 from strategies import  Strategy1
@@ -28,7 +28,7 @@ if __name__ == '__main__':
             # traderService = TraderService.TraderService(session_id)
             # 策略1启动
             # Strategy1.Strategy1(db, traderService).run()
-            history_download.run(db)
+            strategy_verify.run(db)
             # xtdata.run()
         except Exception as e:
             e.with_traceback()

@@ -49,7 +49,7 @@ def run(db):
     code_list = history_download.get_code_lists()
     result_map = {}  # 存储每个代码的结果和交易次数
 
-    pbar = tqdm(total=len(code_list), desc="writing...", mininterval=0.1)
+    pbar = tqdm(total=len(code_list), desc="verifying...", mininterval=0.1)
 
     threads = []
     for code in code_list:
