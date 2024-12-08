@@ -119,7 +119,6 @@ def get_previous_date():
     return datetime.fromtimestamp(dates[len(dates) - 1] / 1000).strftime('%Y-%m-%d')
 
 
-# 获取策略买入时的动态溢价
 def get_premium(increase_rate, base_premium_threshold):
     increase_rate = increase_rate * Decimal(100)
     if increase_rate <= 0:

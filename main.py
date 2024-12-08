@@ -1,7 +1,8 @@
 # coding=utf-8
+
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import TraderService
+from service import TraderService, history_download
 import logging
 import time
 from strategies import  Strategy1
@@ -19,16 +20,18 @@ db = DBPool()
 traderService = None
 session_id = round(time.time())
 
+
 if __name__ == '__main__':
     while True:
         try:
             db.initialize_pool()
-            traderService = TraderService.TraderService(session_id)
+            # traderService = TraderService.TraderService(session_id)
             # 策略1启动
-            Strategy1.Strategy1(db, traderService).run()
-
-            xtdata.run()
+            # Strategy1.Strategy1(db, traderService).run()
+            history_download.run(db)
+            # xtdata.run()
         except Exception as e:
+            e.with_traceback()
             logging.error(e)
         finally:
             # 释放线程池
