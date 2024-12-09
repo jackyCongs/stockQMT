@@ -62,3 +62,29 @@ def find(db, order_id):
     finally:
         cursor.close()
         conn.close()
+
+
+def find_last_by_code(db, stock_code):
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    try:
+        # 构建查询语句，选择所有字段
+        query = "SELECT * FROM strategy_records WHERE stock_code = %s order by id desc limit 1"
+        # 执行查询
+        cursor.execute(query, (stock_code,))
+
+        # 获取查询结果
+        result = cursor.fetchone()
+        if result:
+            # 将结果转换为字典，字段名称作为键
+            column_names = [desc[0] for desc in cursor.description]
+            result_dict = dict(zip(column_names, result))
+            return result_dict
+        else:
+            return None
+    except Exception as e:
+        print(e)
+        return None
+    finally:
+        cursor.close()
+        conn.close()

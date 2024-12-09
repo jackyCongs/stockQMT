@@ -28,6 +28,7 @@ if __name__ == '__main__':
             traderService = TraderService.TraderService(session_id)
             # 策略1启动
             Strategy1.Strategy1(db, traderService).run()
+            traderService.xt_trader.run_forever()
             xtdata.run()
         except Exception as e:
             e.with_traceback()

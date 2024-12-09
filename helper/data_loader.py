@@ -2,6 +2,7 @@
 import time
 
 from db import stock as stock_db
+from db import strategy_record
 from datetime import datetime, timedelta
 from decimal import Decimal, getcontext
 from helper import spider, utils
@@ -24,8 +25,13 @@ logger = logging.getLogger(__name__)
 # 【以下是建议操作的策略】
 # 可买的价格 = (target_worth - 分红除权) * (1 + 目标指数的加权涨跌幅) * (1-withdraw_commission_7rate) * (溢价1-0.5) > 比卖价
 # 可卖的价格 = (target_worth - 分红除权) * (1 + 目标指数的涨跌幅) * (1-withdraw_commission_7rate) <= 买价
-def load_inner_stock(db_instance, inner_stock_infos):
+def load_inner_stock(db_instance, inner_stock_infos, holding):
     stocks = stock_db.get_stock_list(db_instance)
+
+    # 持仓列表
+    holding_map = {}
+    for hold in holding:
+        holding_map[hold.stock_code] = round(hold.can_use_volume / 100)
 
     pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=0.1)
     for stock in stocks:
@@ -42,6 +48,17 @@ def load_inner_stock(db_instance, inner_stock_infos):
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
+
+            hold_num = 0
+            hold_date = ""
+            hold_status = 0
+            if utils.enhance_stock_code(stock['code']) in holding_map:
+                hold_status = 1
+                hold_num = holding_map[utils.enhance_stock_code(stock['code'])]
+                record = strategy_record.find_last_by_code(db_instance, utils.enhance_stock_code(stock['code']))
+                if record is not None:
+                    hold_date = record['start_date']
+
             inner_stock_infos[utils.enhance_stock_code(stock['code'])] = {
                 'code': stock['code'],
                 'name': stock['name'],
@@ -49,9 +66,9 @@ def load_inner_stock(db_instance, inner_stock_infos):
                 'last_net_worth_date': net_worth['net_worth_date'],
                 'withdraw_commission_7rate': Decimal(stock['withdraw_commission_7rate'] / 100),
                 'target_index': stock['target_worth_url'],
-                'hold_status': 0,# [0没用持有， 2买入中， 1持有中]
-                'hold_num': 0, #@todo 待添加
-                'hold_date': '', #@todo 待添加
+                'hold_status': hold_status,# [0没用持有， 2买入中， 1持有中]
+                'hold_num': hold_num,
+                'hold_date': hold_date,
                 'premium': 0,
                 'askPrice': [],
                 'askVol': [],

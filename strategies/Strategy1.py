@@ -1,13 +1,14 @@
 # coding=utf-8
-
+import json
 import math
 from decimal import Decimal
-from xtquant import xtdata
+from xtquant import xtdata, xtconstant
 from db import strategy_record
 import helper.data_loader as data_loader
 from helper import utils
 from datetime import datetime
 import logging
+from service import account
 import time
 
 logging.basicConfig(level=logging.INFO,
@@ -33,7 +34,7 @@ class Strategy1:
         self.traderService = traderService
 
     def run(self):
-        data_loader.load_inner_stock(self.db, self.inner_stock_infos)
+        data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.traderService.get_holding())
         data_loader.load_target_index(self.inner_stock_infos, self.target_index_infos)
 
         SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(self.db), callback=self.stock_handler)
@@ -86,14 +87,8 @@ class Strategy1:
             return
 
         appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
-        # @todo 测试，把askPrice降的低低的
-        # if stock_code == "160135.SZ" or stock_code == "160631.SZ":
-        #     for i, price in enumerate(stock_info['askPrice']):
-        #         stock_info['askPrice'][i] = round(stock_info['askPrice'][i]/5, 5)
-
         # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
         if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
-
             bid_price = 0
             bid_num = 0
             bid_money = 0
@@ -122,16 +117,45 @@ class Strategy1:
             # 可买的数量太少也放弃出价
             if bid_money < self.min_bid_money:
                 return
-            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 0:
+
+            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 0 and stock_info['hold_num']:
                 # 下单
                 remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                          f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
                 logging.info(remark)
-                order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", remark,
-                                                   self.inner_stock_infos)
+                order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos)
                 if order_id:
                     logging.info(f"order_id: {order_id}")
-                    strategy_record.add(self.db, order_id, "折价套利", stock_code, bid_price, bid_num * 100,
-                                        index_info['current'], remark)
+                    order = self.traderService.query_by_order_id(int(order_id))
+                    if order.order_status != xtconstant.ORDER_SUCCEEDED:
+                        # 撤单
+                        pass
+                    if order.traded_volume > 0:
+                        strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
+                                            order.traded_volume, index_info['current'], remark)
                 else:
                     logging.error("下单失败")
+        if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
+            sell_price = stock_info['bidPrice'][0]
+            sell_num = 0
+            total_money = 0
+            for i, price in enumerate(stock_info['bidPrice']):
+                if price >= appraisal:
+                    sell_price = round(price, 6)
+                    sell_num += stock_info['bidVol'][i]
+                    if sell_num > stock_info['hold_num']:
+                        sell_num = stock_info['hold_num']
+                    total_money += sell_num * 100 * price
+                    if sell_num >= stock_info['hold_num']:
+                        break
+            # 可卖的太少了，不值当的
+            if total_money < self.min_bid_money and sell_num < stock_info['hold_num']:
+                return
+            if sell_num > 0 and sell_price > 0 and stock_info['hold_num'] > 0:
+                remark = f"卖出日志: 卖出{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}," \
+                         f"估值{appraisal},报价{sell_price},{sell_num}手, 目前买盘{stock_info['bidPrice']},{stock_info['bidVol']}, 指数{index_info}"
+                logging.info(remark)
+                order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
+                                                        self.inner_stock_infos)
+                strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
+                                    sell_num*100, index_info['current'], remark)

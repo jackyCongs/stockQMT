@@ -84,6 +84,7 @@ class TraderService:
         self.xt_trader = self._create_trader()
         self._connect()
         self.locks = {}
+        self.asset = self.xt_trader.query_stock_asset(self.account)
 
     def _create_trader(self):
         # 创建交易对象
@@ -119,7 +120,7 @@ class TraderService:
                 time.sleep(1)
 
     # 异步下单
-    def async_buy(self, stock_code, bid_price, bid_num, strategy_name, remark, inner_stock_infos):
+    def async_buy(self, stock_code, bid_price, bid_num, strategy_name, inner_stock_infos):
         # 抢锁
         lock = self._get_lock(stock_code)
         lock.acquire()
@@ -132,14 +133,37 @@ class TraderService:
             bid_num *= 100
             return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
-                strategy_name, remark
+                strategy_name
             )
             #return '123123'
         finally:
             lock.release()
 
-    def sync_sell(self):
-        pass
+    def sync_sell(self, stock_code, sell_price, sell_num, strategy_name, inner_stock_infos):
+        lock = self._get_lock(stock_code)
+        lock.acquire()
+        try:
+            if inner_stock_infos[stock_code]['hold_num'] == 0:
+                return
+            sell_num *= 100
+            return self.xt_trader.order_stock(
+                self.account, stock_code, xtconstant.STOCK_SELL, sell_num, xtconstant.FIX_PRICE, sell_price,
+                strategy_name
+            )
+        finally:
+            lock.release()
 
-    def cancel(self):
-        pass
+    def cancel(self, order_id):
+        return self.xt_trader.cancel_order_stock(self.account, order_id)
+
+    def get_holding(self):
+        return self.xt_trader.query_stock_positions(self.account)
+
+    def get_transactions(self):
+        return self.xt_trader.query_stock_trades(self.account)
+
+    def get_hanging(self):
+        return self.xt_trader.query_stock_orders(account, True)
+
+    def query_by_order_id(self, order_id):
+        return self.xt_trader.query_stock_order(self.account, order_id)
