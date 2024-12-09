@@ -27,8 +27,8 @@ class Strategy1:
         # 上一个交易日
         self.yesterday = data_loader.get_previous_date()
         # 单笔最大买入金额
-        self.max_bid_money = 5000
-        self.min_bid_money = 2000
+        self.max_bid_money = 5200
+        self.min_bid_money = 1000
         self.base_premium_threshold = 0.4
         self.db = db
         self.traderService = traderService
@@ -95,6 +95,12 @@ class Strategy1:
             premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
             premium = 0
             first_premium = 0
+            asset = self.traderService.get_asset()
+            # 账户低于1000块就不操作了，意义不大
+            if asset.cash < self.min_bid_money:
+                return
+            if asset.cash <= self.max_bid_money:
+                self.max_bid_money = asset.cash
             for i, price in enumerate(stock_info['askPrice']):
                 # 计算一下当前卖一的折价率
                 if i == 0:
@@ -107,7 +113,7 @@ class Strategy1:
                     bid_money += bid_price * bid_num * 100
                     # 如果超过了最大单笔限上额，减去一点
                     if bid_money > self.max_bid_money:
-                        bid_num -= math.floor((bid_money - self.max_bid_money) / bid_price / 100)
+                        bid_num -= math.ceil((bid_money - self.max_bid_money) / bid_price / 100)
 
             if utils.should_print(60):
                 logging.info(

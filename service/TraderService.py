@@ -167,3 +167,6 @@ class TraderService:
 
     def query_by_order_id(self, order_id):
         return self.xt_trader.query_stock_order(self.account, order_id)
+
+    def get_asset(self):
+        return self.xt_trader.query_stock_asset(self.account)
