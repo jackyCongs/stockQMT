@@ -85,8 +85,7 @@ class Strategy1:
             # 白天可以用，晚上就不行了
             return
 
-        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] -
-                                                                  (stock_info['withdraw_commission_7rate'])), 6))
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (Decimal(1) - stock_info['withdraw_commission_7rate'])), 6)
         # @todo 测试，把askPrice降的低低的
         # if stock_code == "160135.SZ" or stock_code == "160631.SZ":
         #     for i, price in enumerate(stock_info['askPrice']):
