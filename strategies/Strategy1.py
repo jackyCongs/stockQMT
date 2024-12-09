@@ -99,11 +99,13 @@ class Strategy1:
             bid_money = 0
             premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
             premium = 0
+            first_premium = 0
             for i, price in enumerate(stock_info['askPrice']):
                 # 计算一下当前卖一的折价率
                 if i == 0:
-                    premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
-                self.inner_stock_infos[stock_code].update({'premium': premium})
+                    first_premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
+                premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
+                self.inner_stock_infos[stock_code].update({'premium': first_premium})
                 if premium >= premium_threshold and bid_money <= self.max_bid_money:
                     bid_price = round(price, 6)
                     bid_num += stock_info['askVol'][i]
