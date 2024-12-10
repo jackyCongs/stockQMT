@@ -54,3 +54,22 @@ def find_next_data(db, stock_code, time):
     finally:
         cursor.close()
         conn.close()
+
+
+def get_all_day(db, stock_code, time):
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    try:
+        time_pattern = f"{str(time[:8])}%"
+        query = "SELECT * FROM market_data WHERE stock_code = %s AND time LIKE %s ORDER BY time ASC"
+        cursor.execute(query, (str(stock_code), time_pattern,))
+        rows = cursor.fetchall()
+        column_names = [description[0] for description in cursor.description]
+        # 将每条记录转换为字典，并放入列表中返回
+        return [dict(zip(column_names, row)) for row in rows]
+    except Exception as e:
+        print(e)
+        return None
+    finally:
+        cursor.close()
+        conn.close()

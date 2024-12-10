@@ -6,6 +6,12 @@ from db import market_data
 import threading
 from tqdm import tqdm
 
+'''
+实验记录：
+    1、尾盘涨停战法，收益率：-1.693%
+    2、跌停战法
+
+'''
 
 # 校验数据收益率
 class ThreadRunner(threading.Thread):
@@ -23,25 +29,39 @@ class ThreadRunner(threading.Thread):
         current_capital = initial_capital
 
         while True:
+            # 计算每天第一条数据，要保证 start_time 1500结尾
             stock_day_start = market_data.find_next_data(self.db, stock_code, start_time)
             if stock_day_start is None:
                 break
             if stock_day_start['time'] >= '20240930':
                 break
-            limit_up_price = round(stock_day_start['preClose'] * 1.1, 2)
+            # 这天收盘的数据，获取时间，用来后续循环获取下一天用
             stock_day_end = market_data.find_data(self.db, stock_code, stock_day_start['time'][:-4] + "1500")
-
-            if stock_day_end['high'] >= limit_up_price and stock_day_end['low'] < limit_up_price:
-                next_day = market_data.find_next_data(self.db, stock_code, stock_day_start['time'][:-4] + "1500")
-                if next_day is not None:
-                    transaction_count += 1
-                    current_profit = round((next_day['open'] - stock_day_end['high']) / stock_day_end['high'] * 100, 6)
-                    current_capital = round(current_capital * (1 + current_profit / 100), 2)
-
-                    print(f"{stock_code} - {stock_day_end['time']}以{stock_day_end['high']}买入，次日{next_day['open']}卖出，"
-                          f"收益率{current_profit}%, 当前资金{current_capital}")
-
             start_time = stock_day_end['time']
+
+            limit_up_price = round(stock_day_start['preClose'] * 1.1, 2)
+            limit_down_price = round(stock_day_start['preClose'] * 0.9, 2)
+
+            # 获取一整天的数据
+            all_day_data = market_data.get_all_day(self.db, stock_code, stock_day_start['time'])
+            if all_day_data is None:
+                break
+
+            for stock in all_day_data:
+                if (stock['open'] <= limit_down_price and stock['high'] > limit_down_price) or \
+                        (stock['open'] > limit_down_price and stock['low'] <= limit_down_price and stock['close'] > limit_down_price):
+                    # 买入点，跌停开板了
+                    next_day = market_data.find_next_data(self.db, stock_code, stock_day_start['time'][:-4] + "1500")
+                    if next_day is not None:
+                        transaction_count += 1
+                        current_profit = round((next_day['open'] - stock_day_end['low']) / stock_day_end['low'] * 100,
+                                               6)
+                        current_capital = round(current_capital * (1 + current_profit / 100), 2)
+
+                        print(
+                            f"{stock_code} - {stock_day_end['time']}以{stock_day_end['high']}买入，次日{next_day['open']}卖出，"
+                            f"收益率{current_profit}%, 当前资金{current_capital}")
+                        break
 
         # 将每个线程的结果存储到result_map中
         self.result_map[stock_code] = (current_capital, transaction_count)

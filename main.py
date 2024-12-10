@@ -22,6 +22,9 @@ session_id = round(time.time())
 
 
 if __name__ == '__main__':
+    db.initialize_pool()
+    strategy_verify.run(db)
+    exit()
     while True:
         try:
             db.initialize_pool()
