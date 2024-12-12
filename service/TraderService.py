@@ -146,6 +146,7 @@ class TraderService:
             if inner_stock_infos[stock_code]['hold_num'] == 0:
                 return
             sell_num *= 100
+            inner_stock_infos[stock_code].update({'hold_num', 0})
             return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_SELL, sell_num, xtconstant.FIX_PRICE, sell_price,
                 strategy_name
