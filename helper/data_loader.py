@@ -84,6 +84,14 @@ def load_inner_stock(db_instance, inner_stock_infos, holding):
     pbar.close()
 
 
+def subscribe_rest_index_stock(target_index_infos):
+    # 没有就绪的指数，用另一种方式监听
+    for stock_code in target_index_infos:
+        if target_index_infos[stock_code]['status'] == True:
+            continue
+        pass
+
+
 def get_all_inner_stocks_code(db_instance):
     stocks = stock_db.get_stock_list(db_instance)
     codes = []

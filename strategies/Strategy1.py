@@ -41,6 +41,9 @@ class Strategy1:
         SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(self.inner_stock_infos),
                                             callback=self.index_handler)
         logging.info(f"策略1启动，订阅成功: SId1-{SId1}, SId2-{SId2}\r")
+        time.sleep(10)
+        # 10秒后，开始用另一种方式监听没有订阅到的指数
+        data_loader.subscribe_rest_index_stock(self.target_index_infos)
 
     def stock_handler(self, msgs):
         for code in msgs:
