@@ -2,6 +2,7 @@
 
 import time
 import logging
+from datetime import datetime, time as d_time
 
 last_print_time = time.time()
 logging.basicConfig(level=logging.INFO,
@@ -41,3 +42,16 @@ def should_print(gap):
         last_print_time = current_time
         return True
     return False
+
+
+def is_market_opening():
+    # 获取当前时间
+    now = datetime.now()
+    morning_open_time = d_time(9, 30)
+    morning_close_time = d_time(11, 30)
+    afternoon_open_time = d_time(13, 0)
+    afternoon_close_time = d_time(15, 0)
+    # 0-4 表示周一至周五
+    if now.weekday() >= 5:
+        return False
+    return (morning_open_time <= now.time() <= morning_close_time) or (afternoon_open_time <= now.time() <= afternoon_close_time)

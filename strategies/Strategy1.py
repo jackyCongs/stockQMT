@@ -10,6 +10,7 @@ from datetime import datetime
 import logging
 from service import account
 import time
+import threading
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
@@ -43,7 +44,8 @@ class Strategy1:
         logging.info(f"策略1启动，订阅成功: SId1-{SId1}, SId2-{SId2}\r")
         time.sleep(10)
         # 10秒后，开始用另一种方式监听没有订阅到的指数
-        data_loader.subscribe_rest_index_stock(self.target_index_infos)
+        logging.info(f"loading rest index...")
+        threading.Thread(target=data_loader.subscribe_rest_index_stock, args=(self.target_index_infos,)).start()
 
     def stock_handler(self, msgs):
         for code in msgs:

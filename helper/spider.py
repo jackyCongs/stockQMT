@@ -56,7 +56,7 @@ def get_last_net_worth(code):
             'bonus_money': bonus_money}
 
 
-def get_stock_lower_sell_price(stock_code):
+def get_stock_bid_sell_info(stock_code):
     derive = stock_code.stock_code.split('.')[1]
     derive_num = 0
     if derive == "SZ":
