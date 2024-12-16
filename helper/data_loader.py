@@ -122,29 +122,14 @@ def load_target_index(inner_stock_infos, target_index_infos):
     pbar.close()
 
 
-def subscribe_rest_index_stock(target_index_infos):
+def get_rest_index(target_index_infos):
     # 没有就绪的指数，用另一种方式监听
     rest_index_codes = []
     for stock_code in target_index_infos:
         if target_index_infos[stock_code]['status']:
             continue
         rest_index_codes.append(stock_code)
-    # 每3秒执行一次
-    while True:
-        if utils.is_market_opening():
-            time.sleep(3)
-            continue
-
-        # 在这里多线程执行subscribe_detail_index_stock
-        for index_code in rest_index_codes:
-            threading.Thread(target=subscribe_detail_index_stock, args=(index_code, target_index_infos)).start()
-
-        time.sleep(3)
-
-
-def subscribe_detail_index_stock(index_code, target_index_infos):
-    spider.get_stock_bid_sell_info(index_code)
-    pass
+    return rest_index_codes
 
 
 def get_previous_date():

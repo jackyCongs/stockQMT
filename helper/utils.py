@@ -18,6 +18,8 @@ def enhance_stock_code(code, type='stock'):
             return f"{code}.SH"
         if code.startswith('399'):
             return f"{code}.SZ"
+        if code.startswith("9"):
+            return code
         logger.info(f"当前 code: {code}-{type}, 无对应来源")
         return code
     # 上证
@@ -29,6 +31,19 @@ def enhance_stock_code(code, type='stock'):
         return f"{code}.SZ"
     logger.info(f"当前 code: {code}-{type}, 无对应来源")
     return code
+
+
+def get_derive_by_code(code, type = 'index'):
+    if type != 'index':
+        return -1
+    if code.startswith('000'):
+        return 1
+    if code.startswith("9"):
+        return 2
+    if code.startswith("399"):
+        return 0
+    logger.info(f"当前指数 code: {code}-{type}, 无对应来源")
+    return -1
 
 
 def purified_code(code):
