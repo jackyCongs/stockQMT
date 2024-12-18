@@ -30,7 +30,7 @@ class Strategy1:
         # 单笔最大买入金额
         self.max_bid_money = 5200
         self.min_bid_money = 1000
-        self.base_premium_threshold = 0.3
+        self.base_premium_threshold = 0.27
         self.db = db
         self.traderService = traderService
 
