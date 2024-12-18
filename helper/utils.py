@@ -59,7 +59,7 @@ def should_print(gap):
     return False
 
 
-def is_market_opening():
+def is_market_closing():
     # 获取当前时间
     now = datetime.now()
     morning_open_time = d_time(9, 30)
@@ -68,5 +68,9 @@ def is_market_opening():
     afternoon_close_time = d_time(15, 0)
     # 0-4 表示周一至周五
     if now.weekday() >= 5:
+        return True
+    if morning_open_time <= now.time() <= morning_close_time:
         return False
-    return (morning_open_time <= now.time() <= morning_close_time) or (afternoon_open_time <= now.time() <= afternoon_close_time)
+    if afternoon_open_time <= now.time() <= afternoon_close_time:
+        return False
+    return True

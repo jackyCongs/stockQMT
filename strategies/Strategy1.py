@@ -84,7 +84,7 @@ class Strategy1:
 
     def subscribe_rest_index_stock(self, rest_index_codes):
         while True:
-            if utils.is_market_opening():
+            if utils.is_market_closing():
                 time.sleep(3)
                 continue
 
