@@ -34,7 +34,7 @@ class Strategy1:
         self.db = db
         self.traderService = traderService
         # 多线程请求时，最多5个线程
-        self.semaphore = threading.Semaphore(4)
+        self.semaphore = threading.Semaphore(2)
 
     def run(self):
         data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.traderService.get_holding())
@@ -185,7 +185,7 @@ class Strategy1:
                         pass
                     if order.traded_volume > 0:
                         strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
-                                            order.traded_volume, index_info['current'], remark)
+                                            order.traded_volume, index_info['current'], remark, 300)
                 else:
                     logger.error("下单失败")
         if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
@@ -211,4 +211,4 @@ class Strategy1:
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
                 strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
-                                    sell_num*100, index_info['current'], remark)
+                                    sell_num*100, index_info['current'], remark, 100)
