@@ -171,7 +171,7 @@ class Strategy1:
             if bid_money < self.min_bid_money:
                 return
 
-            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 0 and stock_info['hold_num']:
+            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 1 and stock_info['hold_num']:
                 # 下单
                 remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                          f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
@@ -179,15 +179,19 @@ class Strategy1:
                 order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos)
                 if order_id:
                     logger.info(f"order_id: {order_id}")
+                    time.sleep(1)
                     order = self.traderService.query_by_order_id(int(order_id))
                     if order.order_status != xtconstant.ORDER_SUCCEEDED:
                         # 撤单
-                        pass
+                        self.traderService.cancel(order_id)
+                        strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
+                                            order.traded_volume, index_info['current'], remark, 400)
                     if order.traded_volume > 0:
                         strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
                                             order.traded_volume, index_info['current'], remark, 300)
                 else:
                     logger.error("下单失败")
+                return
         if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
             sell_price = stock_info['bidPrice'][0]
             sell_num = 0
@@ -211,4 +215,4 @@ class Strategy1:
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
                 strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
-                                    sell_num*100, index_info['current'], remark, 100)
+                                    sell_num*100, index_info['current'], remark, 200)
