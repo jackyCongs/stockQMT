@@ -33,6 +33,8 @@ class Strategy1:
         self.base_premium_threshold = 0.22
         self.db = db
         self.traderService = traderService
+        # 多线程请求时，最多5个线程
+        self.semaphore = threading.Semaphore(4)
 
     def run(self):
         data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.traderService.get_holding())
@@ -90,7 +92,9 @@ class Strategy1:
 
             # 在这里多线程执行subscribe_detail_index_stock
             for index_code in rest_index_codes:
+                self.semaphore.acquire()
                 threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
+                self.semaphore.release()
 
             time.sleep(3)
 
