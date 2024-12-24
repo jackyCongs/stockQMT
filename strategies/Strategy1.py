@@ -100,6 +100,7 @@ class Strategy1:
 
     def subscribe_detail_index_stock(self, index_code):
         resp = spider.get_current_index_info(index_code)
+        self.semaphore.release()
         if resp is None:
             return
         current_index = Decimal(resp['current_index'])
@@ -116,7 +117,6 @@ class Strategy1:
         })
         for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
             self.analysis_and_decision_mking(stock_code)
-        self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
         stock_info = self.inner_stock_infos[stock_code]
