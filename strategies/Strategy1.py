@@ -34,7 +34,7 @@ class Strategy1:
         self.db = db
         self.traderService = traderService
         # 多线程请求时，最多5个线程
-        self.semaphore = threading.Semaphore(2)
+        self.semaphore = threading.Semaphore(1)
 
     def run(self):
         data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.traderService.get_holding())
@@ -96,7 +96,7 @@ class Strategy1:
                 threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
                 self.semaphore.release()
 
-            time.sleep(3)
+            time.sleep(1)
 
     def subscribe_detail_index_stock(self, index_code):
         resp = spider.get_current_index_info(index_code)
