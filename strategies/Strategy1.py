@@ -94,7 +94,7 @@ class Strategy1:
             for index_code in rest_index_codes:
                 self.semaphore.acquire()
                 threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
-                self.semaphore.release()
+
 
             time.sleep(1)
 
@@ -116,6 +116,7 @@ class Strategy1:
         })
         for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
             self.analysis_and_decision_mking(stock_code)
+        self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
         stock_info = self.inner_stock_infos[stock_code]
