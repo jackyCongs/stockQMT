@@ -152,8 +152,8 @@ def get_premium(increase_rate, base_premium_threshold):
     if increase_rate <= 0:
         return Decimal(base_premium_threshold)
     elif increase_rate <= 2:
-        return Decimal(base_premium_threshold) + Decimal(increase_rate / Decimal(5))
-    return Decimal(increase_rate / Decimal(3))
+        return Decimal(base_premium_threshold) + Decimal(increase_rate / Decimal(6))
+    return Decimal(increase_rate / Decimal(4))
 
 
 def print_top_variance(inner_stock_infos):
