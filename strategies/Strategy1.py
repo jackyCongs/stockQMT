@@ -170,6 +170,7 @@ class Strategy1:
 
             # 可买的数量太少也放弃出价
             if bid_money < self.min_bid_money:
+                logger.info(f"{stock_info['name']}, {stock_info['code']}, 可买数量太少, {bid_money} < {self.min_bid_money}")
                 return
 
             if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 1 and stock_info['hold_num']:
