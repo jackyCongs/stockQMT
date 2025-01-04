@@ -29,8 +29,8 @@ class Strategy1:
         self.yesterday = data_loader.get_previous_date()
         # 单笔最大买入金额
         self.max_bid_money = 5200
-        self.min_bid_money = 1000
-        self.base_premium_threshold = 0.20
+        self.min_bid_money = 500
+        self.base_premium_threshold = 0.25
         self.db = db
         self.traderService = traderService
         # 多线程请求时，最多5个线程
@@ -168,11 +168,14 @@ class Strategy1:
                     f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
                 data_loader.print_top_variance(self.inner_stock_infos)
 
+            if bid_money == 0:
+                return
             # 可买的数量太少也放弃出价
             if bid_money < self.min_bid_money:
+                logger.info(f"{stock_info['name']}, {stock_info['code']}, 可买数量太少, {bid_money} < {self.min_bid_money}")
                 return
 
-            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] == 1 and stock_info['hold_num']:
+            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] != 1:
                 # 下单
                 remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
                          f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
@@ -190,6 +193,7 @@ class Strategy1:
                     if order.traded_volume > 0:
                         strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
                                             order.traded_volume, index_info['current'], remark, 300)
+                        # 在这里更新状态
                 else:
                     logger.error("下单失败")
                 return
