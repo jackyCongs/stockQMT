@@ -9,6 +9,7 @@ from helper import spider, utils
 import logging
 from tqdm import tqdm
 from xtquant import xtdata
+import math
 import threading
 
 logging.basicConfig(level=logging.INFO,
@@ -154,6 +155,15 @@ def get_premium(increase_rate, base_premium_threshold):
     elif increase_rate <= 2:
         return Decimal(base_premium_threshold) + Decimal(increase_rate / Decimal(6))
     return Decimal(increase_rate / Decimal(4))
+
+
+def get_sell_premium(increase_rate):
+    increase_rate = increase_rate * Decimal(100)
+    if increase_rate >= 0:
+        return Decimal(0)
+    elif increase_rate <= -2:
+        return Decimal(increase_rate / Decimal(6)) * Decimal(-1)
+    return Decimal(abs(increase_rate) / Decimal(4)) * Decimal(-1)
 
 
 def print_top_variance(inner_stock_infos):

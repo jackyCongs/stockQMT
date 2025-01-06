@@ -201,8 +201,13 @@ class Strategy1:
             sell_price = stock_info['bidPrice'][0]
             sell_num = 0
             total_money = 0
+            premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
+            premium = 0
             for i, price in enumerate(stock_info['bidPrice']):
                 if price >= appraisal:
+                    premium = round((Decimal(price) - appraisal) / Decimal(appraisal) * 100, 4)
+                    if premium < premium_threshold:
+                        break
                     sell_price = round(price, 6)
                     sell_num += stock_info['bidVol'][i]
                     if sell_num > stock_info['hold_num']:
