@@ -177,7 +177,7 @@ class Strategy1:
 
             if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] != 1:
                 # 下单
-                remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {premium}%，" \
+                remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {first_premium}%，" \
                          f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
                 logger.info(remark)
                 order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos)
