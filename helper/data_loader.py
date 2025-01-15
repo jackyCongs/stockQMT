@@ -163,7 +163,7 @@ def get_sell_premium(increase_rate):
         return Decimal(0)
     elif increase_rate <= -2:
         return Decimal(increase_rate / Decimal(6)) * Decimal(-1)
-    return Decimal(abs(increase_rate) / Decimal(4)) * Decimal(-1)
+    return Decimal(increase_rate) / Decimal(4) * Decimal(-1)
 
 
 def print_top_variance(inner_stock_infos):
