@@ -219,7 +219,7 @@ class Strategy1:
             if total_money < self.min_bid_money and sell_num < stock_info['hold_num']:
                 return
             if sell_num > 0 and sell_price > 0 and stock_info['hold_num'] > 0:
-                remark = f"卖出日志: 卖出{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}," \
+                remark = f"卖出日志: 指数rate:{index_info['increase_rate']}, premium: {premium}, premium_threshold: {premium_threshold}, 卖出{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}," \
                          f"估值{appraisal},报价{sell_price},{sell_num}手, 目前买盘{stock_info['bidPrice']},{stock_info['bidVol']}, 指数{index_info}"
                 logger.info(remark)
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
