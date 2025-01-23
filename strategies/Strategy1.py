@@ -119,6 +119,8 @@ class Strategy1:
             self.analysis_and_decision_mking(stock_code)
 
     def analysis_and_decision_mking(self, stock_code):
+        if utils.is_market_closing():
+            return
         stock_info = self.inner_stock_infos[stock_code]
         index_info = self.target_index_infos[stock_info['target_index']]
         # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
