@@ -185,7 +185,7 @@ class Strategy1:
                 order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos)
                 if order_id:
                     logger.info(f"order_id: {order_id}")
-                    time.sleep(1)
+                    time.sleep(3)
                     order = self.traderService.query_by_order_id(int(order_id))
                     if order.order_status != xtconstant.ORDER_SUCCEEDED:
                         # 撤单
@@ -226,5 +226,7 @@ class Strategy1:
                 logger.info(remark)
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
+                order = self.traderService.query_by_order_id(int(order_id))
+                print(f"卖出结果: {json.dumps(order, indent=2, ensure_ascii=False)}")
                 strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
                                     sell_num*100, index_info['current'], remark, 200)
