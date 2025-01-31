@@ -8,7 +8,6 @@ import helper.data_loader as data_loader
 from helper import utils, spider
 from datetime import datetime
 import logging
-from service import account
 import time
 import threading
 

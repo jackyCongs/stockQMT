@@ -76,7 +76,7 @@ class TradeCallback(XtQuantTraderCallback):
         logger.info(status.account_id, status.account_type, status.status)
 
 
-class TraderService:
+class Trader_service:
     def __init__(self, session_id):
         self.path = account.get_path()
         self.session_id = session_id

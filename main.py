@@ -2,7 +2,7 @@
 
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import TraderService, strategy_verify
+from service import Trader_service, strategy_verify
 import logging
 import time
 from strategies import  Strategy1
@@ -25,7 +25,7 @@ if __name__ == '__main__':
     while True:
         try:
             db.initialize_pool()
-            traderService = TraderService.TraderService(session_id)
+            traderService = Trader_service.Trader_service(session_id)
             # 策略1启动
             Strategy1.Strategy1(db, traderService).run()
             traderService.xt_trader.run_forever()
