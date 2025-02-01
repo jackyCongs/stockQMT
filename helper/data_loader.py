@@ -35,7 +35,7 @@ def load_inner_stock(db_instance, inner_stock_infos, holding):
     for hold in holding:
         holding_map[hold.stock_code] = round(hold.can_use_volume / 100)
 
-    pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=0.1)
+    pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
     for stock in stocks:
         try:
             net_worth = spider.get_last_net_worth(stock['code'])
@@ -85,6 +85,34 @@ def load_inner_stock(db_instance, inner_stock_infos, holding):
     # 完成后关闭进度条
     pbar.close()
 
+def load_stock(db_instance, stock_infos, stock_codes, holding):
+    stocks = stock_db.get_stock_list(db_instance)
+    # 持仓列表
+    holding_map = {}
+    for hold in holding:
+        holding_map[hold.stock_code] = round(hold.can_use_volume / 100)
+    hold_num = 0
+    pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
+    for stock_code in stock_codes:
+        pbar.update(1)
+        stock = stock_db.get_stock_by_code(db_instance)
+        if stock is None:
+            print(f"加载{stock_code}时，不存在")
+            continue
+        if utils.enhance_stock_code(stock['code']) in holding_map:
+            hold_num = holding_map[utils.enhance_stock_code(stock['code'])]
+        stock_infos[utils.enhance_stock_code(stock['code'])] = {
+            'code': stock['code'],
+            'name': stock['name'],
+            'hold_num': hold_num,
+            'askPrice': [],
+            'askVol': [],
+            'bidPrice': [],
+            'bidVol': [],
+            'status': False,
+        }
+    pbar.close()
+
 
 def get_all_inner_stocks_code(db_instance):
     stocks = stock_db.get_stock_list(db_instance)
@@ -94,6 +122,13 @@ def get_all_inner_stocks_code(db_instance):
             continue
         codes.append(utils.enhance_stock_code(stock['code']))
     return codes
+
+
+def convert_enhance_code(codes):
+    res = []
+    for code in codes:
+        res.append(utils.enhance_stock_code(code))
+    return res
 
 
 def get_all_target_index_code(inner_stock_infos):
