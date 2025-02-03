@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 ## T+0 高频交易策略
 class Strategy2:
     def __init__(self, db, traderService):
-        self.stock_T_0_codes = ["513600", "159980"]
+        self.stock_T_0_codes = ["000002", "159980"]
         self.stock_T_0_infos = {}
         # 最大、小买入金额
         self.bid_max_money = 2200
@@ -21,13 +21,17 @@ class Strategy2:
 
     # 启动策略
     def run(self):
-        subscribe_id = xtdata.subscribe_whole_quote(data_loader.convert_enhance_code(self.stock_T_0_codes), callback=self.analyse)
+        subscribe_id = xtdata.subscribe_whole_quote(data_loader.convert_enhance_code(self.stock_T_0_codes),
+                                                    callback=self.analyse)
         print(f"订阅结果: {subscribe_id}")
 
     # 拿到订阅数据，实时分析
     def analyse(self, msgs):
         is_holding = False
         for code in msgs:
+            print(f"信息输出 code: {code}, {msgs[code]}")
+            continue
+
             self.stock_T_0_infos[code].update({
                 'askPrice': msgs[code]['askPrice'],
                 'askVol': msgs[code]['askVol'],
