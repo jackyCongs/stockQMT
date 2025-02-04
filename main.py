@@ -27,9 +27,9 @@ if __name__ == '__main__':
             db.initialize_pool()
             traderService = Trader_service.Trader_service(session_id)
             # 策略1启动
-            #Strategy1.Strategy1(db, traderService).run()
+            Strategy1.Strategy1(db, traderService).run()
             # 策略2启动
-            Strategy2.Strategy2(db, traderService).run()
+            #Strategy2.Strategy2(db, traderService).run()
             traderService.xt_trader.run_forever()
             xtdata.run()
         except Exception as e:

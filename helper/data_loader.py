@@ -85,17 +85,16 @@ def load_inner_stock(db_instance, inner_stock_infos, holding):
     # 完成后关闭进度条
     pbar.close()
 
-def load_stock(db_instance, stock_infos, stock_codes, holding):
-    stocks = stock_db.get_stock_list(db_instance)
+def load_stock(db_instance, stock_codes, stock_infos, holding):
     # 持仓列表
     holding_map = {}
     for hold in holding:
         holding_map[hold.stock_code] = round(hold.can_use_volume / 100)
     hold_num = 0
-    pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
+    pbar = tqdm(total=len(stock_codes), desc="inner_stock loading...", mininterval=1)
     for stock_code in stock_codes:
         pbar.update(1)
-        stock = stock_db.get_stock_by_code(db_instance)
+        stock = stock_db.get_stock_by_code(db_instance, stock_code)
         if stock is None:
             print(f"加载{stock_code}时，不存在")
             continue
