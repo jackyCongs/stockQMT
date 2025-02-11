@@ -135,7 +135,6 @@ class Trader_service:
                 self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
                 strategy_name
             )
-            #return '123123'
         finally:
             lock.release()
 
@@ -145,8 +144,11 @@ class Trader_service:
         try:
             if inner_stock_infos[stock_code]['hold_num'] == 0:
                 return
+            # 更新持有数量
+            remain_num = inner_stock_infos[stock_code]['hold_num']
+            inner_stock_infos[stock_code].update({'hold_num': remain_num - sell_num})
+
             sell_num *= 100
-            inner_stock_infos[stock_code].update({'hold_num': 0})
             return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_SELL, sell_num, xtconstant.FIX_PRICE, sell_price,
                 strategy_name

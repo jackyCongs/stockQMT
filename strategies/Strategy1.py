@@ -36,8 +36,9 @@ class Strategy1:
         self.semaphore = threading.Semaphore(1)
 
     def run(self):
-        data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.traderService.get_holding())
+        data_loader.load_inner_stock(self.db, self.inner_stock_infos)
         data_loader.load_target_index(self.inner_stock_infos, self.target_index_infos)
+        data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
 
         SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(self.db), callback=self.stock_handler)
         SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(self.inner_stock_infos),
@@ -194,7 +195,8 @@ class Strategy1:
                     if order.traded_volume > 0:
                         strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
                                             order.traded_volume, index_info['current'], remark, 300)
-                        # 在这里更新状态
+                    # 更新持有信息
+                    data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
                 else:
                     logger.error("下单失败")
                 return
@@ -229,3 +231,5 @@ class Strategy1:
                 print(f"卖出结果: {order}")
                 strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
                                     sell_num*100, index_info['current'], remark, 200)
+                # 更新持有信息
+                data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
