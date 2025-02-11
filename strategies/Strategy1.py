@@ -226,6 +226,6 @@ class Strategy1:
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
                 order = self.traderService.query_by_order_id(int(order_id))
-                print(f"卖出结果: {json.dumps(order, indent=2, ensure_ascii=False)}")
+                print(f"卖出结果: {order}")
                 strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
                                     sell_num*100, index_info['current'], remark, 200)

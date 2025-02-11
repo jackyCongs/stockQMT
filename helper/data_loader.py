@@ -106,8 +106,13 @@ def load_stock(db_instance, stock_codes, stock_infos, holding):
             'hold_num': hold_num,
             'askPrice': [],
             'askVol': [],
+            'askTrendPrice': 0,
+            'askTrendVol': [],
             'bidPrice': [],
             'bidVol': [],
+            'bidTrendPrice': 0,
+            'bidTrendVol': [],
+            'hold_status': 0,
             'status': False,
         }
     pbar.close()
