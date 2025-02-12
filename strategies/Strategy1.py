@@ -145,6 +145,7 @@ class Strategy1:
             premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
             premium = 0
             first_premium = 0
+            hold_num = stock_info['hold_num']
             asset = self.traderService.get_asset()
             # 账户低于最小值就不操作了，意义不大
             if asset.cash < self.min_bid_money:
@@ -188,9 +189,9 @@ class Strategy1:
             if bid_num > 0 and bid_price > 0:
                 # 下单
                 remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {first_premium}%，" \
-                         f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
+                         f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}, 当前持有{hold_num}"
                 logger.info(remark)
-                order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos)
+                order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
                 if order_id:
                     logger.info(f"order_id: {order_id}")
                     time.sleep(3)

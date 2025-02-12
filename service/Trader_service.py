@@ -120,16 +120,16 @@ class Trader_service:
                 time.sleep(1)
 
     # 异步下单
-    def async_buy(self, stock_code, bid_price, bid_num, strategy_name, inner_stock_infos):
+    def async_buy(self, stock_code, bid_price, bid_num, strategy_name, inner_stock_infos, previous_hold_num):
         # 抢锁
         lock = self._get_lock(stock_code)
         lock.acquire()
 
         try:
             # 调用之前可能会有并发问题，在锁中需要再校验一词
-            if inner_stock_infos[stock_code]['hold_status'] != 0:
+            if previous_hold_num != inner_stock_infos[stock_code]['hold_num']:
                 return
-            inner_stock_infos[stock_code].update({'hold_status': 2})
+            inner_stock_infos[stock_code].update({'hold_num': previous_hold_num + bid_num})
             bid_num *= 100
             return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
