@@ -146,24 +146,32 @@ class Strategy1:
             premium = 0
             first_premium = 0
             asset = self.traderService.get_asset()
-            # 账户低于1000块就不操作了，意义不大
+            # 账户低于最小值就不操作了，意义不大
             if asset.cash < self.min_bid_money:
                 return
             if asset.cash <= self.max_bid_money:
                 self.max_bid_money = asset.cash
+            # 已经持仓的金额
+            holding_money = stock_info['hold_num'] * 100 * Decimal(stock_info['askPrice'][0])
+            max_able_bid_money = self.max_bid_money - holding_money
+            print(f'stock_info{stock_info["name"]}, 当前已经持有了{holding_money}元, 本次最多可以购买: {max_able_bid_money}元')
+
+            # 已经持有的够多了，没有再买的空间了
+            if max_able_bid_money < self.min_bid_money:
+                return
             for i, price in enumerate(stock_info['askPrice']):
                 # 计算一下当前卖一的折价率
                 if i == 0:
                     first_premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
                 premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
                 self.inner_stock_infos[stock_code].update({'premium': first_premium})
-                if premium >= premium_threshold and bid_money <= self.max_bid_money:
+                if premium >= premium_threshold and bid_money <= max_able_bid_money:
                     bid_price = round(price, 6)
                     bid_num += stock_info['askVol'][i]
                     bid_money += bid_price * bid_num * 100
                     # 如果超过了最大单笔限上额，减去一点
-                    if bid_money > self.max_bid_money:
-                        bid_num -= math.ceil((bid_money - self.max_bid_money) / bid_price / 100)
+                    if bid_money > max_able_bid_money:
+                        bid_num -= math.ceil((bid_money - max_able_bid_money) / bid_price / 100)
 
             if utils.should_print(60):
                 logger.info(
