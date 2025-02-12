@@ -185,7 +185,7 @@ class Strategy1:
                 logger.info(f"{stock_info['name']}, {stock_info['code']}, 可买数量太少, {bid_money} < {self.min_bid_money}")
                 return
 
-            if bid_num > 0 and bid_price > 0 and stock_info['hold_status'] != 1:
+            if bid_num > 0 and bid_price > 0:
                 # 下单
                 remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {first_premium}%，" \
                          f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}"
