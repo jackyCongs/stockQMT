@@ -2,6 +2,8 @@
 import json
 import math
 from decimal import Decimal
+from logging import exception
+
 from xtquant import xtdata, xtconstant
 from db import strategy_record
 import helper.data_loader as data_loader
@@ -99,24 +101,29 @@ class Strategy1:
             time.sleep(1)
 
     def subscribe_detail_index_stock(self, index_code):
-        resp = spider.get_current_index_info(index_code)
-        self.semaphore.release()
-        if resp is None:
+        try:
+            resp = spider.get_current_index_info(index_code)
+            if resp is None:
+                return
+            current_index = Decimal(resp['current_index'])
+            if current_index <= 0:
+                return
+            self.target_index_infos[index_code].update({
+                # 只有从这里更新的指数数据有这个key，防止连接中断后依据死数据做决策
+                'index_updated_time': time.time(),
+                'start': resp['last_close'],
+                'current': resp['current_index'],
+                'increase_rate': Decimal(
+                    round((Decimal(resp['current_index']) - Decimal(resp['last_close'])) / Decimal(resp['last_close']), 6)),
+                'status': True,
+            })
+            for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
+                self.analysis_and_decision_mking(stock_code)
+        except IOError as e:
+            print(e)
             return
-        current_index = Decimal(resp['current_index'])
-        if current_index <= 0:
-            return
-        self.target_index_infos[index_code].update({
-            # 只有从这里更新的指数数据有这个key，防止连接中断后依据死数据做决策
-            'index_updated_time': time.time(),
-            'start': resp['last_close'],
-            'current': resp['current_index'],
-            'increase_rate': Decimal(
-                round((Decimal(resp['current_index']) - Decimal(resp['last_close'])) / Decimal(resp['last_close']), 6)),
-            'status': True,
-        })
-        for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
-            self.analysis_and_decision_mking(stock_code)
+        finally:
+            self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
         if utils.is_market_closing():
@@ -147,19 +154,13 @@ class Strategy1:
             first_premium = 0
             hold_num = stock_info['hold_num']
             asset = self.traderService.get_asset()
-            # 账户低于最小值就不操作了，意义不大
-            if asset.cash < self.min_bid_money:
-                return
-            if asset.cash <= self.max_bid_money:
-                self.max_bid_money = asset.cash
             # 已经持仓的金额
-            holding_money = stock_info['hold_num'] * 100 * Decimal(stock_info['askPrice'][0])
-            max_able_bid_money = self.max_bid_money - holding_money
-            print(f'stock_info{stock_info["name"]}, 当前已经持有了{holding_money}元, 本次最多可以购买: {max_able_bid_money}元')
+            holding_money = round(stock_info['hold_num'] * 100 * Decimal(stock_info['askPrice'][0]), 2)
+            max_able_bid_money = Decimal(self.max_bid_money) - Decimal(holding_money)
 
-            # 已经持有的够多了，没有再买的空间了
-            if max_able_bid_money < self.min_bid_money:
-                return
+            if asset.cash <= max_able_bid_money:
+                max_able_bid_money = asset.cash
+
             for i, price in enumerate(stock_info['askPrice']):
                 # 计算一下当前卖一的折价率
                 if i == 0:
@@ -174,11 +175,14 @@ class Strategy1:
                     if bid_money > max_able_bid_money:
                         bid_num -= math.ceil((bid_money - max_able_bid_money) / bid_price / 100)
 
-            if utils.should_print(60):
+            if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
                 logger.info(
-                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
+                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, "
+                    f"折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
                 data_loader.print_top_variance(self.inner_stock_infos)
-
+            # 已经持有的够多了，没有再买的空间了
+            if max_able_bid_money < self.min_bid_money:
+                return
             if bid_money == 0:
                 return
             # 可买的数量太少也放弃出价
@@ -210,6 +214,11 @@ class Strategy1:
                     logger.error("下单失败")
                 return
         if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
+            if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
+                logger.info(
+                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
+                data_loader.print_top_variance(self.inner_stock_infos)
+
             sell_price = stock_info['bidPrice'][0]
             sell_num = 0
             total_money = 0

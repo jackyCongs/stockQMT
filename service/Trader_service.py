@@ -173,3 +173,13 @@ class Trader_service:
 
     def get_asset(self):
         return self.xt_trader.query_stock_asset(self.account)
+
+    def get_history_deal_list(self):
+        return self.xt_trader.query_data(self.account, "C:\\Users\\Administrator\\Desktop\\deal.csv", "deal")
+
+    def export_history_deal_list(self):
+        return self.xt_trader.export_data(self.account,
+                                          '/c/Users/Administrator/Desktop/deal2.csv', 'deal'
+                                          )
+    def query_stock_trades(self):
+        return self.xt_trader.query_stock_trades(self.account)

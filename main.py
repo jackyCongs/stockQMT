@@ -2,7 +2,7 @@
 
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import Trader_service, strategy_verify
+from service import Trader_service
 import logging
 import time
 from strategies import  Strategy1, Strategy2
