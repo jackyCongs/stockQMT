@@ -2,10 +2,12 @@
 
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import Trader_service
+from service import Trader_service, stock_queue
 import logging
 import time
 from strategies import  Strategy1, Strategy2
+import helper.data_loader as data_loader
+from decimal import Decimal, getcontext
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',

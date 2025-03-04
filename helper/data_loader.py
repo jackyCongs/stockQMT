@@ -195,21 +195,26 @@ def get_previous_date():
 
 
 def get_premium(increase_rate, base_premium_threshold):
-    increase_rate = increase_rate * Decimal(100)
-    if increase_rate <= 0:
-        return Decimal(base_premium_threshold)
-    elif increase_rate <= 2:
-        return Decimal(base_premium_threshold) + Decimal(increase_rate / Decimal(6))
-    return Decimal(increase_rate / Decimal(4))
+    increase_rate_pct = increase_rate * Decimal(100)
+    base = Decimal(base_premium_threshold)
+    if increase_rate_pct <= 0:
+        return base
+    elif increase_rate_pct <= 3:
+        return base + increase_rate_pct / Decimal(6)
+    else:
+        return base + (Decimal(3) / Decimal(6)) + (increase_rate_pct - Decimal(3)) / Decimal(3)
 
 
 def get_sell_premium(increase_rate):
     increase_rate = increase_rate * Decimal(100)
     if increase_rate >= 0:
         return Decimal(0)
-    elif increase_rate <= -2:
-        return Decimal(increase_rate / Decimal(6)) * Decimal(-1)
-    return Decimal(increase_rate) / Decimal(4) * Decimal(-1)
+    abs_rate = abs(increase_rate)
+    if abs_rate <= 2:
+        divisor = Decimal('4.5')
+    else:
+        divisor = Decimal('5')
+    return abs_rate / divisor
 
 
 def print_top_variance(inner_stock_infos):

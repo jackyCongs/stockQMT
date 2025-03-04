@@ -12,6 +12,7 @@ from datetime import datetime
 import logging
 import time
 import threading
+from service import stock_queue
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
@@ -36,6 +37,7 @@ class Strategy1:
         self.traderService = traderService
         # 多线程请求时，最多5个线程
         self.semaphore = threading.Semaphore(1)
+        self.sell_queue = stock_queue.StockQueue()
 
     def run(self):
         data_loader.load_inner_stock(self.db, self.inner_stock_infos)
@@ -96,8 +98,6 @@ class Strategy1:
             for index_code in rest_index_codes:
                 self.semaphore.acquire()
                 threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
-
-
             time.sleep(1)
 
     def subscribe_detail_index_stock(self, index_code):
@@ -173,7 +173,7 @@ class Strategy1:
                     bid_money += bid_price * bid_num * 100
                     # 如果超过了最大单笔限上额，减去一点
                     if bid_money > max_able_bid_money:
-                        bid_num -= math.ceil((bid_money - max_able_bid_money) / bid_price / 100)
+                        bid_num -= Decimal(math.ceil((Decimal(bid_money) - Decimal(max_able_bid_money)) / Decimal(bid_price) / Decimal(100)))
 
             if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
                 logger.info(
@@ -245,6 +245,7 @@ class Strategy1:
                 logger.info(remark)
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
+                print(f"卖出orderid: {order_id}")
                 order = self.traderService.query_by_order_id(int(order_id))
                 print(f"卖出结果: {order}")
                 strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
