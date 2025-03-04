@@ -38,6 +38,7 @@ class Strategy1:
         # 多线程请求时，最多5个线程
         self.semaphore = threading.Semaphore(1)
         self.sell_queue = stock_queue.StockQueue()
+        self.buy_queue = stock_queue.StockQueue()
 
     def run(self):
         data_loader.load_inner_stock(self.db, self.inner_stock_infos)
@@ -132,7 +133,8 @@ class Strategy1:
         index_info = self.target_index_infos[stock_info['target_index']]
         # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
         if 'index_updated_time' in index_info:
-            if time.time() - index_info['index_updated_time'] >= 8:
+            if time.time() - index_info['index_updated_time'] >= 5:
+                self.sell_queue.remove_stock(stock_code)
                 return
         # 双方未就绪，不处理
         if index_info['status'] == False or stock_info['status'] == False:
@@ -143,7 +145,29 @@ class Strategy1:
             # 白天可以用，晚上就不行了
             return
 
+        # 计算的委卖的
         appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
+        if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
+            self.sell_queue.remove_stock(stock_code)
+        premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
+        first_premium = round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4)
+        # premium符合要求，并且有足够可买的金额的，维护到双向链表队列中
+        if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
+            self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold)
+        else:
+            self.sell_queue.remove_stock(stock_code)
+
+        # 计算委买的
+        buy_premium = round((Decimal(stock_info['bidPrice'][0] - appraisal)) / Decimal(appraisal) * 100, 4)
+        premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
+        if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0
+                and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and buy_premium >= premium_threshold and stock_info['hold_num'] > 0):
+            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold)
+        else:
+            self.buy_queue.remove_stock(stock_code)
+
+        # 两个队列进行对比，决策是否先卖后买，还要看还有没有钱，如果钱够就不需要先卖，等自然规则卖
+
         # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
         if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
             bid_price = 0
