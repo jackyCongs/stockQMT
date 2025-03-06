@@ -135,6 +135,7 @@ class Strategy1:
         if 'index_updated_time' in index_info:
             if time.time() - index_info['index_updated_time'] >= 5:
                 self.sell_queue.remove_stock(stock_code)
+                self.buy_queue.remove_stock(stock_code)
                 return
         # 双方未就绪，不处理
         if index_info['status'] == False or stock_info['status'] == False:
@@ -144,30 +145,55 @@ class Strategy1:
             # pass
             # 白天可以用，晚上就不行了
             return
+        # 维护两个队列
+        self.maintain_premium_queues(stock_code, stock_info, index_info)
+        # 买一队列中，只有premium大于0就会立即被卖，所以只需要取队列头的第一个数据
+        first_buy_queue_node = self.buy_queue.head
+        first_sell_queue_node = self.sell_queue.head
+        if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
+            self.buy_queue.remove_stock(stock_code)
+            self.to_sell(stock_code, stock_info, index_info, first_buy_queue_node.premium)
+            # 如果当前stock_code能卖，就一定不会有买入机会，直接结束
+            return
+        # 如果钱够，遇到好的委卖数据果断买入
+        asset = self.traderService.get_asset()
+        if asset.cash >= self.min_bid_money:
+            if first_sell_queue_node is not None and first_sell_queue_node.code == stock_code:
+                self.sell_queue.remove_stock(stock_code)
+                self.to_buy(stock_code, stock_info, index_info, first_sell_queue_node.premium)
+            return
+        else:
+            # 如果钱不够了，买卖队列进行匹配，如果先卖后买有利 then do it
+            if first_sell_queue_node is None or first_buy_queue_node is None:
+                return
+            if first_sell_queue_node.premium > first_buy_queue_node.premium + self.base_premium_threshold:
+                # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
+                # todo
+                pass
 
+    def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
+        # premium符合要求，并且委卖大于最小买入金额，维护到双向链表队列中
         appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
             self.sell_queue.remove_stock(stock_code)
         premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
         first_premium = round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4)
-        # premium符合要求，并且有足够可买的金额的，维护到双向链表队列中
         if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
             self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold)
         else:
             self.sell_queue.remove_stock(stock_code)
 
-        # 计算委买的
+        # 计算委买的，买一大于200元、持有数量大于0的，才能进入队列
         buy_premium = round((Decimal(stock_info['bidPrice'][0] - appraisal)) / Decimal(appraisal) * 100, 4)
         premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0
-                and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and buy_premium >= premium_threshold and stock_info['hold_num'] > 0):
+                and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and stock_info['hold_num'] > 0):
             self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold)
         else:
             self.buy_queue.remove_stock(stock_code)
 
-        # 两个队列进行对比，决策是否先卖后买，还要看还有没有钱，如果钱够就不需要先卖，等自然规则卖
-
+    def to_buy(self, stock_code, stock_info, index_info, appraisal):
         # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
         if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
             bid_price = 0
@@ -222,7 +248,6 @@ class Strategy1:
                 order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
                 if order_id:
                     logger.info(f"order_id: {order_id}")
-                    time.sleep(3)
                     order = self.traderService.query_by_order_id(int(order_id))
                     if order.order_status != xtconstant.ORDER_SUCCEEDED:
                         # 撤单
@@ -237,6 +262,8 @@ class Strategy1:
                 else:
                     logger.error("下单失败")
                 return
+
+    def to_sell(self, stock_code, stock_info, index_info, appraisal):
         if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
             if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
                 logger.info(
