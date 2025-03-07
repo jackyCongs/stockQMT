@@ -38,3 +38,17 @@ def get_stock_by_code(db, code):
     finally:
         cursor.close()
         conn.close()
+
+def update_stock_net_worth(db, net_worth, id):
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    try:
+        update = f"UPDATE stock SET net_worth = %s WHERE id = %s"
+        cursor.execute(update, (net_worth, id,))
+        conn.commit()
+    except Exception as e:
+        print(e)
+        return None
+    finally:
+        cursor.close()
+        conn.close()

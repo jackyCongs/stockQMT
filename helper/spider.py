@@ -18,7 +18,7 @@ def get_last_net_worth(code):
     soup = BeautifulSoup(response.text, 'html.parser')
 
     bonus_date = None
-    bonus_money = Decimal('0')
+    bonus_money = float('0')
 
     # 解析分红数据
     if soup.find('li', {'class': 'position_bonus'}):
@@ -28,7 +28,7 @@ def get_last_net_worth(code):
                 match = re.search(r'\d+\.?\d*', bonus_arr[1].text)
                 if match:
                     bonus_date = bonus_arr[0].text
-                    bonus_money = Decimal(match.group())
+                    bonus_money = float(match.group())
 
     # 解析单位净值
     dl_blocks = soup.find('div', {'class': 'dataOfFund'}).find_all('dl', class_=re.compile(r'^dataItem0'))
