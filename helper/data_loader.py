@@ -11,6 +11,7 @@ from tqdm import tqdm
 from xtquant import xtdata
 import math
 import threading
+import json
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
@@ -32,15 +33,21 @@ def load_inner_stock(db_instance, inner_stock_infos):
     pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
     for stock in stocks:
         try:
-            net_worth = spider.get_last_net_worth(stock['code'])
-            if net_worth['code'] != 200:
-                logger.error(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
-                continue
-            if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == datetime.now().strftime("%Y-%m-%d") \
-                    and net_worth['bonus_date'] != net_worth['bonus_date']:
-                logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
-                net_worth['net_worth'] = Decimal(net_worth['net_worth']) - Decimal(net_worth['bonus_money'])
-
+            net_worth = None
+            if stock['net_worth']:
+                net_worth = json.loads(stock['net_worth'])
+            # 如果没有净值数据 或 没有当日最新的数据，则取加载最新的数据并存起来
+            if net_worth is None or net_worth['net_worth_date'] != datetime.now().strftime("%Y-%m-%d"):
+                net_worth = spider.get_last_net_worth(stock['code'])
+                if net_worth['code'] != 200:
+                    logger.error(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
+                    continue
+                if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == datetime.now().strftime("%Y-%m-%d") \
+                        and net_worth['bonus_date'] != net_worth['bonus_date']:
+                    logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
+                    net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
+                # 存起来净值
+                stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), stock['id'])
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
