@@ -152,7 +152,7 @@ class Strategy1:
         first_sell_queue_node = self.sell_queue.head
         if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
             self.buy_queue.remove_stock(stock_code)
-            self.to_sell(stock_code, stock_info, index_info, first_buy_queue_node.premium)
+            self.to_sell(stock_code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
             # 如果当前stock_code能卖，就一定不会有买入机会，直接结束
             return
         # 如果钱够，遇到好的委卖数据果断买入
@@ -160,16 +160,21 @@ class Strategy1:
         if asset.cash >= self.min_bid_money:
             if first_sell_queue_node is not None and first_sell_queue_node.code == stock_code:
                 self.sell_queue.remove_stock(stock_code)
-                self.to_buy(stock_code, stock_info, index_info, first_sell_queue_node.premium)
+                self.to_buy(stock_code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
             return
         else:
-            # 如果钱不够了，买卖队列进行匹配，如果先卖后买有利 then do it
+            ## 如果钱不够了，买卖队列进行匹配，如果先卖后买有利 then do it
+            # 如果买卖队列没有，无法匹配直接结束
             if first_sell_queue_node is None or first_buy_queue_node is None:
                 return
-            if first_sell_queue_node.premium > first_buy_queue_node.premium + self.base_premium_threshold:
+            # 买卖队列有利，并且可买的两完全覆盖卖的量
+            if ((first_sell_queue_node.premium > first_buy_queue_node.premium + self.base_premium_threshold) and
+                    (first_sell_queue_node.quantity * first_sell_queue_node.price >= first_buy_queue_node.quantity * first_buy_queue_node.price)):
                 # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
-                # todo
-                pass
+                self.to_sell(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
+                self.to_buy(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
+                self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
+                return
 
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
@@ -180,7 +185,7 @@ class Strategy1:
         premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
         first_premium = round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4)
         if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
-            self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold)
+            self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold, appraisal)
         else:
             self.sell_queue.remove_stock(stock_code)
 
@@ -189,13 +194,15 @@ class Strategy1:
         premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0
                 and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and stock_info['hold_num'] > 0):
-            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold)
+            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold, appraisal)
         else:
             self.buy_queue.remove_stock(stock_code)
 
-    def to_buy(self, stock_code, stock_info, index_info, appraisal):
+    def to_buy(self, stock_code, limit_price, appraisal):
         # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
-        if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] < appraisal:
+        stock_info = self.inner_stock_infos[stock_code]
+        index_info = self.target_index_infos[stock_info['target_index']]
+        if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0]:
             bid_price = 0
             bid_num = 0
             bid_money = 0
@@ -212,12 +219,11 @@ class Strategy1:
                 max_able_bid_money = asset.cash
 
             for i, price in enumerate(stock_info['askPrice']):
-                # 计算一下当前卖一的折价率
-                if i == 0:
-                    first_premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
-                premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
-                self.inner_stock_infos[stock_code].update({'premium': first_premium})
-                if premium >= premium_threshold and bid_money <= max_able_bid_money:
+                if price > limit_price:
+                    continue
+                #premium = round((appraisal - Decimal(price)) / Decimal(appraisal) * 100, 4)
+                # if premium >= premium_threshold and bid_money <= max_able_bid_money:
+                if bid_money <= max_able_bid_money:
                     bid_price = round(price, 6)
                     bid_num += stock_info['askVol'][i]
                     bid_money += bid_price * bid_num * 100
@@ -263,7 +269,9 @@ class Strategy1:
                     logger.error("下单失败")
                 return
 
-    def to_sell(self, stock_code, stock_info, index_info, appraisal):
+    def to_sell(self, stock_code, limit_price, appraisal):
+        stock_info = self.inner_stock_infos[stock_code]
+        index_info = self.target_index_infos[stock_info['target_index']]
         if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
             if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
                 logger.info(
@@ -276,10 +284,12 @@ class Strategy1:
             premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
             premium = 0
             for i, price in enumerate(stock_info['bidPrice']):
-                if price >= appraisal:
+                if price < limit_price:
+                    continue
+                if price >= limit_price:
                     premium = round((Decimal(price) - appraisal) / Decimal(appraisal) * 100, 4)
-                    if premium < premium_threshold:
-                        break
+                    # if premium < premium_threshold:
+                    #     break
                     sell_price = round(price, 6)
                     sell_num += stock_info['bidVol'][i]
                     if sell_num > stock_info['hold_num']:
@@ -303,3 +313,7 @@ class Strategy1:
                                     sell_num*100, index_info['current'], remark, 200)
                 # 更新持有信息
                 data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
+
+    def to_cancel(self, sell_stock_code, buy_stock_code):
+        hangings = self.traderService.get_hanging()
+        pass
