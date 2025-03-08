@@ -127,13 +127,14 @@ class Strategy1:
             self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
-        if utils.is_market_closing():
-            return
+        # todo 临时打开
+        # if utils.is_market_closing():
+        #     return
         stock_info = self.inner_stock_infos[stock_code]
         index_info = self.target_index_infos[stock_info['target_index']]
         # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
         if 'index_updated_time' in index_info:
-            if time.time() - index_info['index_updated_time'] >= 5:
+            if time.time() - index_info['index_updated_time'] >= 4:
                 self.sell_queue.remove_stock(stock_code)
                 self.buy_queue.remove_stock(stock_code)
                 return
@@ -142,14 +143,22 @@ class Strategy1:
             return
 
         if stock_info['last_net_worth_date'] != self.yesterday:
-            # pass
+            pass
             # 白天可以用，晚上就不行了
-            return
+            # todo 临时打开
+            # return
         # 维护两个队列
         self.maintain_premium_queues(stock_code, stock_info, index_info)
+        print()
+        print("#########################")
+        self.sell_queue.print_queue()
+        self.buy_queue.print_queue()
+        print("#########################")
         # 买一队列中，只有premium大于0就会立即被卖，所以只需要取队列头的第一个数据
         first_buy_queue_node = self.buy_queue.head
         first_sell_queue_node = self.sell_queue.head
+        # todo 先执行到这，确认一下queue正确
+        return
         if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
             self.buy_queue.remove_stock(stock_code)
             self.to_sell(stock_code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
@@ -168,11 +177,12 @@ class Strategy1:
             if first_sell_queue_node is None or first_buy_queue_node is None:
                 return
             # 买卖队列有利，并且可买的两完全覆盖卖的量
-            if ((first_sell_queue_node.premium > first_buy_queue_node.premium + self.base_premium_threshold) and
+            if ((first_sell_queue_node.premium > first_buy_queue_node.premium + Decimal(self.base_premium_threshold)) and
                     (first_sell_queue_node.quantity * first_sell_queue_node.price >= first_buy_queue_node.quantity * first_buy_queue_node.price)):
                 # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
                 self.to_sell(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
                 self.to_buy(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
+                time.sleep(1)
                 self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
                 return
 
@@ -183,14 +193,14 @@ class Strategy1:
         if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
             self.sell_queue.remove_stock(stock_code)
         premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
-        first_premium = round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4)
+        first_premium = Decimal(round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4))
         if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
             self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold, appraisal)
         else:
             self.sell_queue.remove_stock(stock_code)
 
         # 计算委买的，买一大于200元、持有数量大于0的，才能进入队列
-        buy_premium = round((Decimal(stock_info['bidPrice'][0] - appraisal)) / Decimal(appraisal) * 100, 4)
+        buy_premium = Decimal(round((Decimal(stock_info['bidPrice'][0]) - appraisal) / Decimal(appraisal) * Decimal(100), 4))
         premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0
                 and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and stock_info['hold_num'] > 0):
@@ -254,6 +264,7 @@ class Strategy1:
                 order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
                 if order_id:
                     logger.info(f"order_id: {order_id}")
+                    time.sleep(1)
                     order = self.traderService.query_by_order_id(int(order_id))
                     if order.order_status != xtconstant.ORDER_SUCCEEDED:
                         # 撤单
@@ -316,4 +327,8 @@ class Strategy1:
 
     def to_cancel(self, sell_stock_code, buy_stock_code):
         hangings = self.traderService.get_hanging()
-        pass
+        for item in hangings:
+            if item.stock_code == sell_stock_code or item.stock_code == buy_stock_code:
+                print(f"撤销委托, order_id: {item.order_id}, 撤销结果: {self.traderService.cancel(item.order_id)}")
+                # print(item.order_time)
+                # print(item.order_status)

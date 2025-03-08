@@ -166,7 +166,7 @@ class Trader_service:
         return self.xt_trader.query_stock_trades(self.account)
 
     def get_hanging(self):
-        return self.xt_trader.query_stock_orders(account, True)
+        return self.xt_trader.query_stock_orders(self.account, True)
 
     def query_by_order_id(self, order_id):
         return self.xt_trader.query_stock_order(self.account, order_id)
