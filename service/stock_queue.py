@@ -1,13 +1,14 @@
 # coding=utf-8
 
 class StockNode:
-    def __init__(self, code, name, quantity, price, premium, appraisal):
+    def __init__(self, code, name, quantity, price, premium, appraisal, update_time):
         self.code = code
         self.name = name
         self.quantity = quantity
         self.price = price
         self.premium = premium
         self.appraisal = appraisal
+        self.update_time = update_time
         self.prev = None
         self.next = None
 
@@ -19,13 +20,13 @@ class StockQueue:
         self.size = 0
         self.code_map = {}
 
-    def upsert_stock(self, code, name, quantity, price, premium, appraisal):
+    def upsert_stock(self, code, name, quantity, price, premium, appraisal, update_time):
         # 统一处理新增和更新
         if code in self.code_map:
             self._remove_node(self.code_map[code])
             del self.code_map[code]
 
-        new_node = StockNode(code, name, quantity, price, premium, appraisal)
+        new_node = StockNode(code, name, quantity, price, premium, appraisal, update_time)
         self.code_map[code] = new_node
 
         # 处理空队列
@@ -86,5 +87,5 @@ class StockQueue:
     def print_queue(self):
         current = self.head
         while current:
-            print(f"[{current.code}] {current.name} 涨幅: {current.premium}% 价格: {current.price} 估值: {current.appraisal}")
+            print(f"[{current.code}] {current.name} 估值: {round(current.appraisal, 5)} premium: {round(current.premium, 3)}% 价格: {round(current.price, 3)} 数量 {current.quantity} 总价 {round(current.quantity*current.price*100, 2)}")
             current = current.next

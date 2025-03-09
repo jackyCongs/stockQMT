@@ -7,7 +7,7 @@ from logging import exception
 from xtquant import xtdata, xtconstant
 from db import strategy_record
 import helper.data_loader as data_loader
-from helper import utils, spider
+from helper import utils, spider, date_utils
 from datetime import datetime
 import logging
 import time
@@ -127,9 +127,8 @@ class Strategy1:
             self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
-        # todo 临时打开
-        # if utils.is_market_closing():
-        #     return
+        if utils.is_market_closing():
+            return
         stock_info = self.inner_stock_infos[stock_code]
         index_info = self.target_index_infos[stock_info['target_index']]
         # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
@@ -143,22 +142,22 @@ class Strategy1:
             return
 
         if stock_info['last_net_worth_date'] != self.yesterday:
-            pass
             # 白天可以用，晚上就不行了
-            # todo 临时打开
-            # return
+            return
         # 维护两个队列
         self.maintain_premium_queues(stock_code, stock_info, index_info)
-        print()
-        print("#########################")
-        self.sell_queue.print_queue()
-        self.buy_queue.print_queue()
-        print("#########################")
+        # print()
+        # print("#########################")
+        # print("sell")
+        # self.sell_queue.print_queue()
+        # print("buy")
+        # self.buy_queue.print_queue()
+        # print("#########################")
+        # return
+
         # 买一队列中，只有premium大于0就会立即被卖，所以只需要取队列头的第一个数据
         first_buy_queue_node = self.buy_queue.head
         first_sell_queue_node = self.sell_queue.head
-        # todo 先执行到这，确认一下queue正确
-        return
         if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
             self.buy_queue.remove_stock(stock_code)
             self.to_sell(stock_code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
@@ -176,26 +175,48 @@ class Strategy1:
             # 如果买卖队列没有，无法匹配直接结束
             if first_sell_queue_node is None or first_buy_queue_node is None:
                 return
-            # 买卖队列有利，并且可买的两完全覆盖卖的量
-            if ((first_sell_queue_node.premium > first_buy_queue_node.premium + Decimal(self.base_premium_threshold)) and
-                    (first_sell_queue_node.quantity * first_sell_queue_node.price >= first_buy_queue_node.quantity * first_buy_queue_node.price)):
+            # 必须更新到自己的时候才能进行决策，否则old data可能已经失效了
+            if first_sell_queue_node.code != stock_code and first_buy_queue_node.code != stock_code:
+                return
+            # 需要保证买卖队列的数据都是最新的
+            if (date_utils.get_current_millisecond() - first_sell_queue_node.update_time) / 1000 > 2.8:
+                self.sell_queue.remove_stock(first_sell_queue_node.code)
+                return
+            if (date_utils.get_current_millisecond() - first_buy_queue_node.update_time) / 1000 > 2.8:
+                self.sell_queue.remove_stock(first_buy_queue_node.code)
+                return
+            # 买卖队列有利，并且可买的两完全覆盖卖的量,sell是正数，buy是负数，
+            # 防止卖了买不进去，卖的premium差必须小于基准值
+            if ((first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold)) and
+                    (first_sell_queue_node.quantity * first_sell_queue_node.price >= first_buy_queue_node.quantity * first_buy_queue_node.price) and
+                    first_buy_queue_node.premium > -self.base_premium_threshold):
+                # 操作之前，先从队列中移出去
+                self.buy_queue.remove_stock(first_buy_queue_node.code)
+                self.sell_queue.remove_stock(first_sell_queue_node.code)
                 # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
+                print(f"队列策略[先卖后买]触发: "
+                      f" {first_buy_queue_node.code}卖出, price:{round(first_buy_queue_node.price, 4)} quantity:{first_buy_queue_node.quantity} appraisal:{round(first_buy_queue_node.appraisal, 5)} premium差:{round(first_buy_queue_node.premium, 4)};"
+                      f"{first_sell_queue_node.code}买入,price:{round(first_sell_queue_node.price, 4)} quantity:{first_sell_queue_node.quantity} appraisal:{round(first_sell_queue_node.appraisal, 5)} premium差:{round(first_sell_queue_node.premium, 4)};")
                 self.to_sell(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
                 self.to_buy(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
-                time.sleep(1)
-                self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
+                time.sleep(0.5)
+                # self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
                 return
 
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
-        # premium符合要求，并且委卖大于最小买入金额，维护到双向链表队列中
-        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
-        if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
-            self.sell_queue.remove_stock(stock_code)
-        premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
-        first_premium = Decimal(round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4))
-        if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
-            self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold, appraisal)
+        # premium符合要求，并且委卖大于最小买入金额，并且已经持有的金额不超过最大限制，维护到双向链表队列中
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (
+                    Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
+        if stock_info['hold_num'] * stock_info['askPrice'][0] * 100 + self.min_bid_money < self.max_bid_money:
+            if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
+                self.sell_queue.remove_stock(stock_code)
+            premium_threshold = data_loader.get_premium(index_info['increase_rate'], self.base_premium_threshold)
+            first_premium = Decimal(round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4))
+            if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
+                self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], first_premium - premium_threshold, appraisal, date_utils.get_current_millisecond())
+            else:
+                self.sell_queue.remove_stock(stock_code)
         else:
             self.sell_queue.remove_stock(stock_code)
 
@@ -204,9 +225,18 @@ class Strategy1:
         premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0
                 and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and stock_info['hold_num'] > 0):
-            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold, appraisal)
+            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold, appraisal, date_utils.get_current_millisecond())
         else:
             self.buy_queue.remove_stock(stock_code)
+        # 每分钟print一次信息
+        if utils.should_print(60):
+            first_sell_queue = self.sell_queue.head
+            first_buy_queue = self.buy_queue.head
+            if first_buy_queue is not None and first_sell_queue is not None:
+                logger.info(
+                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\r\n"
+                    f"-sell队列{first_sell_queue.name}-{first_sell_queue.code},估值: {first_sell_queue.appraisal}, 卖一报价: {round(first_sell_queue.price, 4)}, 折价率: {round((Decimal(first_sell_queue.appraisal) - Decimal(first_sell_queue.price)) / Decimal(first_sell_queue.price) * Decimal(100), 4)}%\r\n"
+                    f"-buy队列{first_buy_queue.name}-{first_buy_queue.code},估值: {first_buy_queue.appraisal}, 卖一报价: {round(first_buy_queue.price, 4)}, 折价率: {round((Decimal(first_buy_queue.price) - Decimal(first_buy_queue.appraisal)) / Decimal(first_buy_queue.price) * Decimal(100), 4)}%\r\n")
 
     def to_buy(self, stock_code, limit_price, appraisal):
         # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
@@ -241,11 +271,6 @@ class Strategy1:
                     if bid_money > max_able_bid_money:
                         bid_num -= Decimal(math.ceil((Decimal(bid_money) - Decimal(max_able_bid_money)) / Decimal(bid_price) / Decimal(100)))
 
-            if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
-                logger.info(
-                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, "
-                    f"折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
-                data_loader.print_top_variance(self.inner_stock_infos)
             # 已经持有的够多了，没有再买的空间了
             if max_able_bid_money < self.min_bid_money:
                 return
@@ -258,7 +283,7 @@ class Strategy1:
 
             if bid_num > 0 and bid_price > 0:
                 # 下单
-                remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {first_premium}%，" \
+                remark = f"买入日志: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%，" \
                          f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}, 当前持有{hold_num}"
                 logger.info(remark)
                 order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
@@ -266,14 +291,18 @@ class Strategy1:
                     logger.info(f"order_id: {order_id}")
                     time.sleep(1)
                     order = self.traderService.query_by_order_id(int(order_id))
-                    if order.order_status != xtconstant.ORDER_SUCCEEDED:
+                    if not order:
                         # 撤单
                         self.traderService.cancel(order_id)
-                        strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
-                                            order.traded_volume, index_info['current'], remark, 400)
-                    if order.traded_volume > 0:
-                        strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
-                                            order.traded_volume, index_info['current'], remark, 300)
+                    else:
+                        if order.order_status != xtconstant.ORDER_SUCCEEDED:
+                            # 撤单
+                            self.traderService.cancel(order_id)
+                            strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
+                                                order.traded_volume, index_info['current'], remark, 400)
+                        elif order.traded_volume > 0:
+                            strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
+                                                order.traded_volume, index_info['current'], remark, 300)
                     # 更新持有信息
                     data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
                 else:
@@ -284,11 +313,6 @@ class Strategy1:
         stock_info = self.inner_stock_infos[stock_code]
         index_info = self.target_index_infos[stock_info['target_index']]
         if len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] >= appraisal and stock_info['hold_num'] > 0:
-            if utils.should_print(60) and len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] > 0:
-                logger.info(
-                    f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}-{stock_info['name']}-{stock_info['code']},估值: {appraisal}, 卖一报价: {round(stock_info['askPrice'][0], 4)}, 折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%")
-                data_loader.print_top_variance(self.inner_stock_infos)
-
             sell_price = stock_info['bidPrice'][0]
             sell_num = 0
             total_money = 0
