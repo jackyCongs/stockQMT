@@ -62,7 +62,7 @@ def should_print(gap):
 def is_market_closing():
     # 获取当前时间
     now = datetime.now()
-    morning_open_time = d_time(9, 35)
+    morning_open_time = d_time(9, 30)
     morning_close_time = d_time(11, 30)
     afternoon_open_time = d_time(13, 0)
     afternoon_close_time = d_time(15, 0)
@@ -74,3 +74,8 @@ def is_market_closing():
     if afternoon_open_time <= now.time() <= afternoon_close_time:
         return False
     return True
+
+def is_market_after_35():
+    now = datetime.now()
+    morning_open_time = d_time(9, 35)
+    return now.time() >= morning_open_time
