@@ -64,7 +64,7 @@ class TradeCallback(XtQuantTraderCallback):
         :param response: XtOrderResponse 对象
         :return:
         """
-        logger.info("on_order_stock_async_response")
+        logger.info("on_order_stock_async_response callback")
         logger.info(response.account_id, response.order_id, response.seq)
 
     def on_account_status(self, status):
@@ -72,7 +72,7 @@ class TradeCallback(XtQuantTraderCallback):
         :param response: XtAccountStatus 对象
         :return:
         """
-        logger.info("on_account_status")
+        logger.info("on_account_status callback")
         logger.info(status.account_id, status.account_type, status.status)
 
 
