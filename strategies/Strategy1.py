@@ -78,7 +78,7 @@ class Strategy1:
             })
             # logger.info(f"stock_handler-{inner_stock_infos[code]}")
             # 分析关联的code
-            self.analysis_and_decision_mking(code)
+            threading.Thread(target=self.analysis_and_decision_mking, args=(code,)).start()
 
     def index_handler(self, msgs):
         for code in msgs:
@@ -95,7 +95,7 @@ class Strategy1:
             # logger.info(f"index_handler-{msgs[code]}")
             # 逐个分析关联的code
             for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:
-                self.analysis_and_decision_mking(stock_code)
+                threading.Thread(target=self.analysis_and_decision_mking, args=(stock_code,)).start()
 
     def subscribe_rest_index_stock(self, rest_index_codes):
         while True:
@@ -108,7 +108,7 @@ class Strategy1:
                 self.semaphore.acquire()
                 threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
                 time.sleep(0.3)
-            time.sleep(4)
+            time.sleep(3)
 
     def subscribe_detail_index_stock(self, index_code):
         try:
@@ -128,7 +128,7 @@ class Strategy1:
                 'status': True,
             })
             for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
-                self.analysis_and_decision_mking(stock_code)
+                threading.Thread(target=self.analysis_and_decision_mking, args=(stock_code,)).start()
         except IOError as e:
             print(e)
             return
@@ -142,7 +142,7 @@ class Strategy1:
         index_info = self.target_index_infos[stock_info['target_index']]
         # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
         if 'index_updated_time' in index_info:
-            if time.time() - index_info['index_updated_time'] >= 4:
+            if time.time() - index_info['index_updated_time'] >= 3:
                 self.sell_queue.remove_stock(stock_code)
                 self.buy_queue.remove_stock(stock_code)
                 return
@@ -217,7 +217,6 @@ class Strategy1:
                       f" {first_buy_queue_node.code}卖出, price:{round(first_buy_queue_node.price, 4)} quantity:{first_buy_queue_node.quantity} appraisal:{round(first_buy_queue_node.appraisal, 5)} premium差:{round(first_buy_queue_node.premium, 4)};"
                       f"   {first_sell_queue_node.code}买入,price:{round(first_sell_queue_node.price, 4)} quantity:{first_sell_queue_node.quantity} appraisal:{round(first_sell_queue_node.appraisal, 5)} premium差:{round(first_sell_queue_node.premium, 4)};")
                 self.to_sell(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal, False)
-                time.sleep(0.5)
                 print(f"prepare to buy {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 self.to_buy(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal, False)
                 # time.sleep(0.5)
@@ -255,7 +254,7 @@ class Strategy1:
         if utils.should_print(60):
             first_sell_queue = self.sell_queue.head
             first_buy_queue = self.buy_queue.head
-            f"\r\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\r\n"
+            logger.info(f"\r\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             if first_buy_queue is not None and first_sell_queue is not None:
                 logger.info(
                     f"-sell队列{first_sell_queue.name}-{first_sell_queue.code},估值: {first_sell_queue.appraisal}, 卖一报价: {round(first_sell_queue.price, 4)}, 折价率: {round((Decimal(first_sell_queue.appraisal) - Decimal(first_sell_queue.price)) / Decimal(first_sell_queue.price) * Decimal(100), 4)}%, premium权重: {first_sell_queue.premium}, 金额 {round(first_sell_queue.price*first_sell_queue.quantity*100, 2)}\r\n"
@@ -382,6 +381,9 @@ class Strategy1:
                 print(f"卖出orderid: {order_id}")
                 order = self.traderService.query_by_order_id(int(order_id))
                 print(f"卖出结果: {order} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                # 0.5秒撤单，如果卖成功了就撤单失败无所谓
+                time.sleep(0.5)
+                self.traderService.cancel(order_id)
                 # strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
                 #                     sell_num*100, index_info['current'], remark, 200)
                 # 更新持有信息

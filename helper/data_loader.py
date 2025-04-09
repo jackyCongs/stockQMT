@@ -100,7 +100,7 @@ def fresh_holding(inner_stock_infos, holding):
                 'hold_num': round(hold.volume / 100),
                 'hold_status': 1 # [0没持有， 2买入中， 1持有中]
             })
-            print(f"stock_code:{stock_code}, hold_num:{round(hold.can_use_volume / 100)}")
+            print(f"stock_code:{stock_code}, can_use_volume:{round(hold.can_use_volume / 100)}")
         else:
             # 未持有该股票，重置为0
             info.update({
