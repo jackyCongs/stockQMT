@@ -33,7 +33,7 @@ if __name__ == '__main__':
             # 策略2启动
             #Strategy2.Strategy2(db, traderService).run()
             traderService.xt_trader.run_forever()
-            xtdata.run()
+            #xtdata.run()
         except Exception as e:
             e.with_traceback()
             logging.error(e)

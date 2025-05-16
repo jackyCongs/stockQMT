@@ -69,6 +69,10 @@ class Strategy1:
     def stock_handler(self, msgs):
         for code in msgs:
             # logger.info(f"订阅消息: stock-  {msgs[code]}")
+            # 港股今天不交易，排除港股的数据
+            #if '港' in self.inner_stock_infos[code]['name'] or 'H' in self.inner_stock_infos[code]['name'] or 'h' in self.inner_stock_infos[code]['name']:
+                #print(self.inner_stock_infos[code])
+                #continue
             self.inner_stock_infos[code].update({
                 'askPrice': msgs[code]['askPrice'],
                 'askVol': msgs[code]['askVol'],
@@ -370,7 +374,7 @@ class Strategy1:
                         break
             # 可卖的太少了，不值当的
             if total_money < self.min_bid_money and sell_num < stock_info['hold_can_use_num']:
-                print(f"可卖的太少了{total_money}, hold_can_use_num: {stock_info['hold_can_use_num']}")
+                print(f"{stock_code}, 可卖的太少了{total_money}, sell_num: {sell_num}, limit_price: {limit_price}, hold_can_use_num: {stock_info['hold_can_use_num']}")
                 return
             if sell_num > 0 and sell_price > 0 and stock_info['hold_can_use_num'] > 0:
                 remark = f"卖出日志: 指数rate:{index_info['increase_rate']}, premium: {premium}, premium_threshold: {premium_threshold}, 卖出{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}," \
