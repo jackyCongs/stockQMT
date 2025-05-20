@@ -383,13 +383,15 @@ class Strategy1:
                 order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
                 print(f"卖出orderid: {order_id}")
-                order = self.traderService.query_by_order_id(int(order_id))
-                print(f"卖出结果: {order} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                # 0.5秒撤单，如果卖成功了就撤单失败无所谓
-                time.sleep(0.5)
-                self.traderService.cancel(order_id)
-                # strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
-                #                     sell_num*100, index_info['current'], remark, 200)
+                if order_id:
+                    # 在回调中添加record更准确，因为一笔委托可能会被不同价格多笔成交
+                    # strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
+                    #                     sell_num * 100, index_info['current'], remark, 200)
+                    order = self.traderService.query_by_order_id(int(order_id))
+                    print(f"卖出结果: {order} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    # 0.5秒撤单，如果卖成功了就撤单失败无所谓
+                    time.sleep(0.5)
+                    self.traderService.cancel(order_id)
                 # 更新持有信息
                 if fresh_holding:
                     data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())

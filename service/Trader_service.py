@@ -1,8 +1,8 @@
 # coding=utf-8
 
-from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
+from xtquant.xttrader import XtQuantTrader
 from xtquant import xtconstant
-from service import account
+from service import account, TradeCallback
 import time
 import threading
 import logging
@@ -12,68 +12,6 @@ logging.basicConfig(level=logging.INFO,
                     filename='logs/app.log',
                     filemode='a')
 logger = logging.getLogger(__name__)
-
-
-class TradeCallback(XtQuantTraderCallback):
-    def on_disconnected(self):
-        """
-        连接断开
-        :return:
-        """
-        logger.info("connection lost")
-
-    def on_stock_order(self, order):
-        """
-        委托回报推送
-        :param order: XtOrder对象
-        :return:
-        """
-        logger.info("on order callback:")
-        logger.info(order.stock_code, order.order_status, order.order_sysid)
-
-    def on_stock_trade(self, trade):
-        """
-        成交变动推送
-        :param trade: XtTrade对象
-        :return:
-        """
-        logger.info("on trade callback")
-        logger.info(trade.account_id, trade.stock_code, trade.order_id)
-
-    def on_order_error(self, order_error):
-        """
-        委托失败推送
-        :param order_error:XtOrderError 对象
-        :return:
-        """
-        logger.info("on order_error callback")
-        logger.info(order_error.order_id, order_error.error_id, order_error.error_msg)
-
-    def on_cancel_error(self, cancel_error):
-        """
-        撤单失败推送
-        :param cancel_error: XtCancelError 对象
-        :return:
-        """
-        logger.info("on cancel_error callback")
-        logger.info(cancel_error.order_id, cancel_error.error_id, cancel_error.error_msg)
-
-    def on_order_stock_async_response(self, response):
-        """
-        异步下单回报推送
-        :param response: XtOrderResponse 对象
-        :return:
-        """
-        logger.info("on_order_stock_async_response callback")
-        logger.info(response.account_id, response.order_id, response.seq)
-
-    def on_account_status(self, status):
-        """
-        :param response: XtAccountStatus 对象
-        :return:
-        """
-        logger.info("on_account_status callback")
-        logger.info(status.account_id, status.account_type, status.status)
 
 
 class Trader_service:
@@ -98,7 +36,8 @@ class Trader_service:
 
     def _connect(self):
         # 建立交易连接
-        self.xt_trader.register_callback(TradeCallback)
+        callback = TradeCallback.TradeCallback()
+        self.xt_trader.register_callback(callback)
         self.xt_trader.start()
         while True:
             connect_result = self.xt_trader.connect()
@@ -178,8 +117,9 @@ class Trader_service:
         return self.xt_trader.query_data(self.account, "C:\\Users\\Administrator\\Desktop\\deal.csv", "deal")
 
     def export_history_deal_list(self):
-        return self.xt_trader.export_data(self.account,
-                                          '/c/Users/Administrator/Desktop/deal2.csv', 'deal'
-                                          )
+        return self.xt_trader.export_data(self.account, 'C:\\Users\\Administrator\\Desktop\\deal.csv', 'deal')
+        # return self.xt_trader.export_data(self.account,
+        #                                   '/c/Users/Administrator/Desktop/deal2.csv', 'deal'
+        #                                   )
     def query_stock_trades(self):
         return self.xt_trader.query_stock_trades(self.account)
