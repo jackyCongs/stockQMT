@@ -394,6 +394,7 @@ class Strategy1:
                     self.traderService.cancel(order_id)
                 # 更新持有信息
                 if fresh_holding:
+                    time.sleep(1)
                     data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
 
     def to_cancel(self, sell_stock_code, buy_stock_code):

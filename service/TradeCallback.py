@@ -1,7 +1,7 @@
-from xtquant.xttrader import XtQuantTrader, XtQuantTraderCallback
+from xtquant.xttrader import XtQuantTraderCallback
 import logging
 from db import strategy_transaction
-from main import db
+from main import db as dbcon
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
@@ -66,7 +66,7 @@ class TradeCallback(XtQuantTraderCallback):
                 """)
         logger.info("on trade callback")
         logger.info(f"成交变动 {trade.account_id}, {trade.stock_code}, {trade.order_id}")
-        strategy_transaction.add(trade)
+        strategy_transaction.add(dbcon, trade)
 
     def on_order_error(self, order_error):
         """

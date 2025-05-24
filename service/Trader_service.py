@@ -117,7 +117,7 @@ class Trader_service:
         return self.xt_trader.query_data(self.account, "C:\\Users\\Administrator\\Desktop\\deal.csv", "deal")
 
     def export_history_deal_list(self):
-        return self.xt_trader.export_data(self.account, 'C:\\Users\\Administrator\\Desktop\\deal.csv', 'deal')
+        return self.xt_trader.export_data(self.account, 'C:\\Users\\Administrator\\Desktop\\deal.csv', 'stkFundFlow', 1747756800)
         # return self.xt_trader.export_data(self.account,
         #                                   '/c/Users/Administrator/Desktop/deal2.csv', 'deal'
         #                                   )
