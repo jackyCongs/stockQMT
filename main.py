@@ -2,7 +2,7 @@
 
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import Trader_service, stock_queue
+from service import Trader_service, Trans_flows
 import logging
 import time
 from strategies import  Strategy1, Strategy2
@@ -24,6 +24,8 @@ session_id = round(time.time())
 
 
 if __name__ == '__main__':
+    Trans_flows.Trans_flows().run()
+    exit()
     while True:
         try:
             db.initialize_pool()
