@@ -2,10 +2,8 @@
 import json
 import math
 from decimal import Decimal
-from logging import exception
 
 from xtquant import xtdata, xtconstant
-from db import strategy_record
 import helper.data_loader as data_loader
 from helper import utils, spider, date_utils
 from datetime import datetime
@@ -334,11 +332,6 @@ class Strategy1:
                             if order.order_status != xtconstant.ORDER_SUCCEEDED:
                                 # 撤单
                                 self.traderService.cancel(order_id)
-                                strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
-                                                    order.traded_volume, index_info['current'], remark, 400)
-                            elif order.traded_volume > 0:
-                                strategy_record.add(self.db, order_id, "折价策略", stock_code, order.traded_price,
-                                                    order.traded_volume, index_info['current'], remark, 300)
                         # 更新持有信息
                         if fresh_holding:
                             data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
