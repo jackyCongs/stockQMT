@@ -1,4 +1,5 @@
 # coding=utf-8
+
 import pymysql
 from db import strategy_flows
 import math
@@ -23,12 +24,18 @@ def load_config():
     return config
 
 class Trans_flows:
-    def __init__(self):
+    def __init__(self, cash):
+        self.cash = cash
         self.available_balance = 0
         self.connection = pymysql.connect(**db_config)
-        # 关闭自动提交
+        # 关闭自动提交，开启以天为单位的事务，要么全部成功要么全部失败
         self.connection.autocommit(False)
         self.config = load_config()
+
+    def check_result(self):
+        if self.available_balance != self.cash:
+            exit(f"对账不通过，账本余额和实际余额不一致: accounting: {self.available_balance}, cash: {self.cash}")
+        print(f"对账通过: 当前可用余额: {self.available_balance}")
 
     def run(self):
         last_flows = strategy_flows.get_by_max_flows_sequence(self.connection)
@@ -38,9 +45,8 @@ class Trans_flows:
 
         self.available_balance = float(last_flows['remained_amount'])
         last_update_date = int(last_trans_date)
-
-        # df = pd.read_excel(self.config['FLOWS']['file'], engine='openpyxl')  # 如果文件是.xlsx格式
-        df = pd.read_csv(self.config['FLOWS']['file'], encoding='gb18030')
+        df = pd.read_excel(self.config['FLOWS']['file'], engine='openpyxl')  # 如果文件是.xlsx格式
+        # df = pd.read_csv(self.config['FLOWS']['file'], encoding="latin1")
         current_process_date = 0
 
         try:
@@ -65,8 +71,11 @@ class Trans_flows:
                 # 赎回交易
                 if hour >= 16:
                     # 要识别是开始赎回，还是赎回到账
-                    if row['成交数量'] != 0:
+                    if row['成交金额'] == 0:
                         # 开始赎回
+                        if row['成交数量'] == 0:
+                            # 成交金额空，数量也空没有实际意义，直接忽略
+                            continue
                         if strategy_flows.get_flow_by_trans_sequence(self.connection, row['成交序号']):
                             print(f"成交序号: {row['成交序号']} 已经存在，处理忽略")
                             continue
@@ -102,6 +111,7 @@ class Trans_flows:
                                    "flows_sequence": next_sequence, "trans_sequence": row['成交序号'], "status": 1}
                     strategy_flows.insert_strategy_flow(self.connection, insert_date)
             # for 循环结束以后，还要 commit 一次，要不然最后一天的没法提交了
+            self.check_result()
             self.connection.commit()
 
         except Exception as e:

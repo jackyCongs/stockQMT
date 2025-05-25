@@ -24,12 +24,12 @@ session_id = round(time.time())
 
 
 if __name__ == '__main__':
-    Trans_flows.Trans_flows().run()
-    exit()
+    traderService = Trader_service.Trader_service(session_id)
+    Trans_flows.Trans_flows(traderService.get_asset()).run()
+
     while True:
         try:
             db.initialize_pool()
-            traderService = Trader_service.Trader_service(session_id)
             # 策略1启动
             Strategy1.Strategy1(db, traderService).run()
             # 策略2启动
