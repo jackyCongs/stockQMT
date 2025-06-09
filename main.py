@@ -25,8 +25,8 @@ session_id = round(time.time())
 
 if __name__ == '__main__':
     traderService = Trader_service.Trader_service(session_id)
-    Trans_flows.Trans_flows(traderService.get_asset()).run()
-
+    # Trans_flows.Trans_flows(traderService.get_asset()).run()
+    # exit()
     while True:
         try:
             db.initialize_pool()

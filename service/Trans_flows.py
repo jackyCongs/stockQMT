@@ -24,8 +24,8 @@ def load_config():
     return config
 
 class Trans_flows:
-    def __init__(self, cash):
-        self.cash = cash
+    def __init__(self, asset):
+        self.asset = asset
         self.available_balance = 0
         self.connection = pymysql.connect(**db_config)
         # 关闭自动提交，开启以天为单位的事务，要么全部成功要么全部失败
@@ -33,8 +33,8 @@ class Trans_flows:
         self.config = load_config()
 
     def check_result(self):
-        if self.available_balance != self.cash:
-            exit(f"对账不通过，账本余额和实际余额不一致: accounting: {self.available_balance}, cash: {self.cash}")
+        if self.available_balance != self.asset.cash:
+            exit(f"对账不通过，账本余额和实际余额不一致: accounting: {self.available_balance}, cash: {self.asset.cash}")
         print(f"对账通过: 当前可用余额: {self.available_balance}")
 
     def run(self):
