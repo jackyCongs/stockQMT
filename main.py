@@ -6,8 +6,7 @@ from service import Trader_service, Trans_flows
 import logging
 import time
 from strategies import  Strategy1, Strategy2
-import helper.data_loader as data_loader
-from decimal import Decimal, getcontext
+import sys
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
@@ -25,8 +24,9 @@ session_id = round(time.time())
 
 if __name__ == '__main__':
     traderService = Trader_service.Trader_service(session_id)
-    # Trans_flows.Trans_flows(traderService.get_asset()).run()
-    # exit()
+    if len(sys.argv) > 0 and sys.argv[0] == 1:
+        Trans_flows.Trans_flows(traderService.get_asset()).run()
+        exit("accounting done")
     while True:
         try:
             db.initialize_pool()
