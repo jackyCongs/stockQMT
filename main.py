@@ -24,7 +24,7 @@ session_id = round(time.time())
 
 if __name__ == '__main__':
     traderService = Trader_service.Trader_service(session_id)
-    if len(sys.argv) > 0 and int(sys.argv[0]) == 1:
+    if len(sys.argv) > 1 and int(sys.argv[1]) == 1:
         Trans_flows.Trans_flows(traderService.get_asset()).run()
         exit("accounting done")
     while True:
