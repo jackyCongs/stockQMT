@@ -146,7 +146,7 @@ class Trans_flows:
             print(incomplete_flow)
             exit("出错了，误差略大")
         other_fee = round(round(self.available_balance + row['成交金额'], 2) - row['资金余额'], 2)
-        if other_fee / row['成交金额'] * 100 > 1:
+        if math.fabs(other_fee / row['成交金额'] * 100) > 1:
             print(row)
             print(incomplete_flow)
             exit("other_fee过大，需要人工介入核实")
