@@ -28,7 +28,7 @@ class Strategy1:
         # 上一个交易日
         self.yesterday = data_loader.get_previous_date()
         # 单笔最大买入金额
-        self.max_bid_money = 7200
+        self.max_bid_money = 14000
         self.min_bid_money = 500
         self.base_premium_threshold = 0.25
         self.db = db
