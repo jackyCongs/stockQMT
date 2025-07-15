@@ -2,7 +2,7 @@
 
 from xtquant import xtdata
 from db.db_pool import DBPool
-from service import Trader_service, Trans_flows
+from service import Trader_service, Trans_flows, Stock_service
 import logging
 import time
 from strategies import  Strategy1, Strategy2
@@ -23,13 +23,17 @@ session_id = round(time.time())
 
 
 if __name__ == '__main__':
+    db.initialize_pool()
+
     traderService = Trader_service.Trader_service(session_id)
     if len(sys.argv) > 1 and int(sys.argv[1]) == 1:
         Trans_flows.Trans_flows(traderService.get_asset()).run()
         exit("accounting done")
+    if len(sys.argv) > 1 and int(sys.argv[1]) == 2:
+        Stock_service.Stock_service(db).update_stock_price()
+        exit("stock price updated done")
     while True:
         try:
-            db.initialize_pool()
             # 策略1启动
             Strategy1.Strategy1(db, traderService).run()
             # 策略2启动

@@ -52,3 +52,17 @@ def update_stock_net_worth(db, net_worth, id):
     finally:
         cursor.close()
         conn.close()
+
+def update_stock_price(db, money, code):
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    try:
+        update = f"UPDATE stock SET money = %s, updated_at = CURRENT_TIMESTAMP WHERE `code` = %s limit 1"
+        cursor.execute(update, (money, code,))
+        conn.commit()
+    except Exception as e:
+        print(e)
+        return None
+    finally:
+        cursor.close()
+        conn.close()
