@@ -64,7 +64,7 @@ def is_market_closing():
     now = datetime.now()
     morning_open_time = d_time(9, 30)
     morning_close_time = d_time(11, 30)
-    afternoon_open_time = d_time(13, 0)
+    afternoon_open_time = d_time(13, 1)
     afternoon_close_time = d_time(15, 0)
     # 0-4 表示周一至周五
     if now.weekday() >= 5:
@@ -79,3 +79,8 @@ def is_market_after_35():
     now = datetime.now()
     morning_open_time = d_time(9, 35)
     return now.time() >= morning_open_time
+
+def is_going_to_close():
+    now = datetime.now()
+    going_to_close_time = d_time(14, 52)
+    return now.time() >= going_to_close_time

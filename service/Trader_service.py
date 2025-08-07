@@ -66,9 +66,9 @@ class Trader_service:
 
         try:
             # 调用之前可能会有并发问题，在锁中需要再校验一词
-            if previous_hold_num != inner_stock_infos[stock_code]['hold_num']:
-                return
-            inner_stock_infos[stock_code].update({'hold_num': previous_hold_num + bid_num})
+            # if previous_hold_num != inner_stock_infos[stock_code]['hold_num']:
+            #     return
+            # inner_stock_infos[stock_code].update({'hold_num': previous_hold_num + bid_num})
             bid_num *= 100
             return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
@@ -81,8 +81,8 @@ class Trader_service:
         lock = self._get_lock(stock_code)
         lock.acquire()
         try:
-            if inner_stock_infos[stock_code]['hold_num'] == 0:
-                return
+            # if inner_stock_infos[stock_code]['hold_num'] == 0:
+            #     return
             # 更新持有数量
             remain_num = inner_stock_infos[stock_code]['hold_num']
             inner_stock_infos[stock_code].update({'hold_num': remain_num - sell_num})

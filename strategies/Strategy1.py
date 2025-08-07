@@ -249,7 +249,7 @@ class Strategy1:
         premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0
                 and stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200 and stock_info['hold_can_use_num'] > 0):
-            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold, appraisal, date_utils.get_current_millisecond())
+            self.buy_queue.upsert_stock(stock_code, stock_info["name"], stock_info["bidVol"][0], stock_info["bidPrice"][0], buy_premium - premium_threshold, buy_premium,appraisal, date_utils.get_current_millisecond())
         else:
             self.buy_queue.remove_stock(stock_code)
         # 每分钟print一次信息
@@ -257,10 +257,13 @@ class Strategy1:
             first_sell_queue = self.sell_queue.head
             first_buy_queue = self.buy_queue.head
             logger.info(f"\r\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            if first_buy_queue is not None and first_sell_queue is not None:
+            if first_buy_queue is not None or first_sell_queue is not None:
                 logger.info(
                     f"-sell队列{first_sell_queue.name}-{first_sell_queue.code},估值: {first_sell_queue.appraisal}, 卖一报价: {round(first_sell_queue.price, 4)}, 折价率: {round((Decimal(first_sell_queue.appraisal) - Decimal(first_sell_queue.price)) / Decimal(first_sell_queue.price) * Decimal(100), 4)}%, premium权重: {first_sell_queue.premium}, 金额 {round(first_sell_queue.price*first_sell_queue.quantity*100, 2)}\r\n"
                     f"-buy队列{first_buy_queue.name}-{first_buy_queue.code},估值: {first_buy_queue.appraisal}, 买一报价: {round(first_buy_queue.price, 4)}, 折价率: {round((Decimal(first_buy_queue.price) - Decimal(first_buy_queue.appraisal)) / Decimal(first_buy_queue.price) * Decimal(100), 4)}%, premium权重: {first_buy_queue.premium}, 金额 {round(first_buy_queue.price*first_buy_queue.quantity*100, 2)}\r\n")
+            self.buy_queue.print_queue()
+        # 快收盘的前几分钟，开始每10秒展示实际估值，手动查看是否有可以卖出的标的
+        if utils.is_going_to_close() and utils.should_print(10):
             self.buy_queue.print_queue()
 
     def to_buy(self, stock_code, limit_price, appraisal, fresh_holding = True):
@@ -319,6 +322,8 @@ class Strategy1:
                     remark = f"买入日志{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: 买入{stock_code}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')},折价率: {round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(stock_info['askPrice'][0]) * Decimal(100), 4)}%，" \
                              f"估值{appraisal},报价{bid_price},{bid_num}手, 目前卖盘{stock_info['askPrice']},{stock_info['askVol']}, 指数{index_info}, 当前持有{hold_num}"
                     logger.info(remark)
+                    # 把bid_num放入到hold_num，防止超买
+                    self.inner_stock_infos[stock_code].update({'hold_num': hold_num + round(bid_num)})
                     order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
                     if order_id:
                         logger.info(f"order_id: {order_id}")
