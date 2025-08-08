@@ -238,7 +238,7 @@ class Strategy1:
             first_premium = Decimal(round((appraisal - Decimal(stock_info['askPrice'][0])) / Decimal(appraisal) * 100, 4))
             if first_premium > premium_threshold and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
                 # 这里的premium是一个权重，
-                self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], (first_premium - (premium_threshold - Decimal(self.base_premium_threshold))), appraisal, date_utils.get_current_millisecond())
+                self.sell_queue.upsert_stock(stock_code, stock_info["name"], stock_info["askVol"][0], stock_info["askPrice"][0], (first_premium - (premium_threshold - Decimal(self.base_premium_threshold))), first_premium, appraisal, date_utils.get_current_millisecond())
             else:
                 self.sell_queue.remove_stock(stock_code)
         else:
@@ -257,9 +257,11 @@ class Strategy1:
             first_sell_queue = self.sell_queue.head
             first_buy_queue = self.buy_queue.head
             logger.info(f"\r\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            if first_buy_queue is not None or first_sell_queue is not None:
+            if first_sell_queue is not None:
                 logger.info(
-                    f"-sell队列{first_sell_queue.name}-{first_sell_queue.code},估值: {first_sell_queue.appraisal}, 卖一报价: {round(first_sell_queue.price, 4)}, 折价率: {round((Decimal(first_sell_queue.appraisal) - Decimal(first_sell_queue.price)) / Decimal(first_sell_queue.price) * Decimal(100), 4)}%, premium权重: {first_sell_queue.premium}, 金额 {round(first_sell_queue.price*first_sell_queue.quantity*100, 2)}\r\n"
+                    f"-sell队列{first_sell_queue.name}-{first_sell_queue.code},估值: {first_sell_queue.appraisal}, 卖一报价: {round(first_sell_queue.price, 4)}, 折价率: {round((Decimal(first_sell_queue.appraisal) - Decimal(first_sell_queue.price)) / Decimal(first_sell_queue.price) * Decimal(100), 4)}%, premium权重: {first_sell_queue.premium}, 金额 {round(first_sell_queue.price * first_sell_queue.quantity * 100, 2)}\r\n")
+            if first_buy_queue is not None:
+                logger.info(
                     f"-buy队列{first_buy_queue.name}-{first_buy_queue.code},估值: {first_buy_queue.appraisal}, 买一报价: {round(first_buy_queue.price, 4)}, 折价率: {round((Decimal(first_buy_queue.price) - Decimal(first_buy_queue.appraisal)) / Decimal(first_buy_queue.price) * Decimal(100), 4)}%, premium权重: {first_buy_queue.premium}, 金额 {round(first_buy_queue.price*first_buy_queue.quantity*100, 2)}\r\n")
             self.buy_queue.print_queue()
         # 快收盘的前几分钟，开始每10秒展示实际估值，手动查看是否有可以卖出的标的
