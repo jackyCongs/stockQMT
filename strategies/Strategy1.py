@@ -81,7 +81,7 @@ class Strategy1:
             })
             # logger.info(f"stock_handler-{inner_stock_infos[code]}")
             # 分析关联的code
-            self.processor.submit_task(self.analysis_and_decision_mking, args=(code,), priority=1)
+            self.processor.submit_task(self.analysis_and_decision_mking, code)
             # threading.Thread(target=self.analysis_and_decision_mking, args=(code,)).start()
 
     def index_handler(self, msgs):
@@ -99,7 +99,7 @@ class Strategy1:
             # logger.info(f"index_handler-{msgs[code]}")
             # 逐个分析关联的code
             for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:
-                self.processor.submit_task(self.analysis_and_decision_mking, args=(stock_code,), priority=1)
+                self.processor.submit_task(self.analysis_and_decision_mking, stock_code)
                 # threading.Thread(target=self.analysis_and_decision_mking, args=(stock_code,)).start()
 
     def subscribe_rest_index_stock(self, rest_index_codes):
@@ -111,7 +111,7 @@ class Strategy1:
             # 在这里多线程执行subscribe_detail_index_stock
             for index_code in rest_index_codes:
                 self.semaphore.acquire()
-                self.processor.submit_task(self.subscribe_detail_index_stock, args=(index_code,), priority=1)
+                self.processor.submit_task(self.subscribe_detail_index_stock, index_code)
                 # threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
                 time.sleep(0.3)
             time.sleep(3)
@@ -134,7 +134,7 @@ class Strategy1:
                 'status': True,
             })
             for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
-                self.processor.submit_task(self.analysis_and_decision_mking, args=(stock_code,), priority=1)
+                self.processor.submit_task(self.analysis_and_decision_mking, stock_code)
                 # threading.Thread(target=self.analysis_and_decision_mking, args=(stock_code,)).start()
         except IOError as e:
             print(e)
