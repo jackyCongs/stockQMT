@@ -87,7 +87,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
 def fresh_holding(inner_stock_infos, holding):
     # 将holding转换为字典以便快速查询，键为股票代码
     holding_dict = {hold.stock_code: hold for hold in holding}
-    print(f"start fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"start fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     # 遍历所有股票信息，更新持仓状态和数量
     for stock_code, info in inner_stock_infos.items():
@@ -100,7 +100,7 @@ def fresh_holding(inner_stock_infos, holding):
                 'hold_num': round(hold.volume / 100),
                 'hold_status': 1 # [0没持有， 2买入中， 1持有中]
             })
-            print(f"stock_code:{stock_code}, can_use_volume:{round(hold.can_use_volume / 100)}")
+            # print(f"stock_code:{stock_code}, can_use_volume:{round(hold.can_use_volume / 100)}")
         else:
             # 未持有该股票，重置为0
             info.update({
@@ -108,7 +108,7 @@ def fresh_holding(inner_stock_infos, holding):
                 'hold_status': 0,
                 'hold_can_use_num': 0
             })
-    print(f"done fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"done fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 
 def load_stock(db_instance, stock_codes, stock_infos, holding):
