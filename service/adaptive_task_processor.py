@@ -14,7 +14,7 @@ class AdaptiveTaskProcessor:
         self.logical_cores = 20
 
         # 线程池配置（IO密集型默认100，是逻辑核心的5倍）
-        self.base_workers = self.physical_cores * 5
+        self.base_workers = self.physical_cores * 22
         # 线程池配置：核心线程20（接近逻辑核心数），最大50（避免过多切换）
         self.executor = ThreadPoolExecutor(
             max_workers=self.base_workers,
@@ -43,7 +43,7 @@ class AdaptiveTaskProcessor:
                       f"CPU使用率: {psutil.cpu_percent()}% | "
                       f"内存使用率: {psutil.virtual_memory().percent}% | "
                       f"线程池大小: {self.executor._max_workers}")
-                time.sleep(1)
+                time.sleep(10)
 
         threading.Thread(target=monitor, daemon=True, name="SystemMonitor").start()
 
@@ -53,12 +53,12 @@ class AdaptiveTaskProcessor:
             start_time = time.time()
             task(*args, **kwargs)
             end_time = time.time()
-            print(
-                f"任务执行耗时: {(end_time - start_time) * 1000:.1f}ms | 从提交到完成总耗时: {(end_time - submit_time) * 1000:.1f}ms")
+            # print(
+            #     f"任务执行耗时: {(end_time - start_time) * 1000:.1f}ms | 从提交到完成总耗时: {(end_time - submit_time) * 1000:.1f}ms")
 
             # 可选：记录慢任务（处理时间>100ms）
-            if time.time() - start_time > 0.1:
-                print(f"[警告] 慢任务耗时: {time.time( ) -start_time:.3f}秒")
+            if end_time - start_time > 1:
+                print(f"[警告] {task.__name__}{args} [慢任务耗时]: {end_time -start_time:.3f}秒 [提交耗时]: {end_time - submit_time:.3f}")
         except Exception as e:
             print(f"任务执行失败: {e}")
         finally:

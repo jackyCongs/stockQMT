@@ -143,95 +143,111 @@ class Strategy1:
             self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
-        if utils.is_market_closing():
-            return
-        stock_info = self.inner_stock_infos[stock_code]
-        index_info = self.target_index_infos[stock_info['target_index']]
-        # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
-        if 'index_updated_time' in index_info:
-            if time.time() - index_info['index_updated_time'] >= 2:
-                self.sell_queue.remove_stock(stock_code)
+        start_time = time.time()
+        step0 = start_time
+        step1 = start_time
+        step2 = start_time
+        try:
+            if utils.is_market_closing():
+                return
+            stock_info = self.inner_stock_infos[stock_code]
+            index_info = self.target_index_infos[stock_info['target_index']]
+            step0 = time.time()
+            # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
+            if 'index_updated_time' in index_info:
+                if time.time() - index_info['index_updated_time'] >= 2:
+                    self.sell_queue.remove_stock(stock_code)
+                    self.buy_queue.remove_stock(stock_code)
+                    return
+            step1 = time.time()
+            # 双方未就绪，不处理
+            if index_info['status'] == False or stock_info['status'] == False:
+                return
+
+            if stock_info['last_net_worth_date'] != self.yesterday:
+                # 白天可以用，晚上就不行了
+                return
+            # 维护两个队列
+            self.maintain_premium_queues(stock_code, stock_info, index_info)
+            step2 = time.time()
+            # print()
+            # print("#########################")
+            # print("sell")
+            # self.sell_queue.print_queue()
+            # print("buy")
+            # self.buy_queue.print_queue()
+            # print("#########################")
+            # return
+
+            # 9点35以后开始执行
+            if not utils.is_market_after_35() or utils.is_market_closing() == True:
+                return
+            # 买一队列中，只有premium大于0就会立即被卖，所以只需要取队列头的第一个数据
+            first_buy_queue_node = self.buy_queue.head
+            first_sell_queue_node = self.sell_queue.head
+            if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
+                print(f"prepare to sell {stock_code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                 self.buy_queue.remove_stock(stock_code)
+                self.to_sell(stock_code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
+                # 如果当前stock_code能卖，就一定不会有买入机会，直接结束
                 return
-        # 双方未就绪，不处理
-        if index_info['status'] == False or stock_info['status'] == False:
-            return
-
-        if stock_info['last_net_worth_date'] != self.yesterday:
-            # 白天可以用，晚上就不行了
-            return
-        # 维护两个队列
-        self.maintain_premium_queues(stock_code, stock_info, index_info)
-        # print()
-        # print("#########################")
-        # print("sell")
-        # self.sell_queue.print_queue()
-        # print("buy")
-        # self.buy_queue.print_queue()
-        # print("#########################")
-        # return
-
-        # 9点35以后开始执行
-        if not utils.is_market_after_35() or utils.is_market_closing() == True:
-            return
-        # 买一队列中，只有premium大于0就会立即被卖，所以只需要取队列头的第一个数据
-        first_buy_queue_node = self.buy_queue.head
-        first_sell_queue_node = self.sell_queue.head
-        if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
-            print(f"prepare to sell {stock_code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-            self.buy_queue.remove_stock(stock_code)
-            self.to_sell(stock_code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
-            # 如果当前stock_code能卖，就一定不会有买入机会，直接结束
-            return
-        # 如果钱够，遇到好的委卖数据果断买入
-        asset = self.traderService.get_asset()
-        if asset.cash >= self.min_bid_money:
-            if first_sell_queue_node is not None and first_sell_queue_node.code == stock_code:
-                print(f"prepare to buy {stock_code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-                self.sell_queue.remove_stock(stock_code)
-                self.to_buy(stock_code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
-            return
-        else:
-            ## 如果钱不够了，买卖队列进行匹配，如果先卖后买有利 then do it
-            # 如果买卖队列没有，无法匹配直接结束
-            if first_sell_queue_node is None or first_buy_queue_node is None:
+            # 如果钱够，遇到好的委卖数据果断买入
+            asset = self.traderService.get_asset()
+            if asset.cash >= self.min_bid_money:
+                if first_sell_queue_node is not None and first_sell_queue_node.code == stock_code:
+                    print(f"prepare to buy {stock_code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    self.sell_queue.remove_stock(stock_code)
+                    self.to_buy(stock_code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
                 return
-            # 必须更新到自己的时候才能进行决策，否则old data可能已经失效了
-            if first_sell_queue_node.code != stock_code and first_buy_queue_node.code != stock_code:
-                return
-            # 需要保证买卖队列的数据都是最新的
-            if (date_utils.get_current_millisecond() - first_sell_queue_node.update_time) / 1000 > 2.8:
-                self.sell_queue.remove_stock(first_sell_queue_node.code)
-                return
-            if (date_utils.get_current_millisecond() - first_buy_queue_node.update_time) / 1000 > 2.8:
-                self.sell_queue.remove_stock(first_buy_queue_node.code)
-                return
-            # 买卖队列有利，并且可买的两完全覆盖卖的量,sell是正数，buy是负数，
-            # 防止卖了买不进去，卖的premium差必须小于基准值
-            # print(f"[先卖后买]日志: 第一个条件[{(first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold))}]"
-            #       f"第二个条件[{(first_sell_queue_node.quantity * first_sell_queue_node.price >= self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] * first_buy_queue_node.price)}]"
-            #       f"第三个条件[{self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] > 0}, {self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num']}]"
-            #       f"第四个条件[{first_buy_queue_node.premium > -self.base_premium_threshold}]"
-            #       f"一 {first_sell_queue_node.premium} > {abs(first_buy_queue_node.premium)} + {Decimal(self.base_premium_threshold)}"
-            #       f"二 {first_sell_queue_node.quantity} * {first_sell_queue_node.price} >= {self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num']} * {first_buy_queue_node.price}"
-            #       f"四 {first_buy_queue_node.premium} > {-self.base_premium_threshold}")
-            if ((first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold)) and
-                    (first_sell_queue_node.quantity * first_sell_queue_node.price >= self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] * first_buy_queue_node.price) and
-                    self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] > 0 and first_buy_queue_node.premium > -self.base_premium_threshold):
-                # 操作之前，先从队列中移出去
-                self.buy_queue.remove_stock(first_buy_queue_node.code)
-                self.sell_queue.remove_stock(first_sell_queue_node.code)
-                # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
-                print(f"队列策略[先卖后买]触发: {stock_code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\r\n"
-                      f" {first_buy_queue_node.code}卖出, price:{round(first_buy_queue_node.price, 4)} quantity:{first_buy_queue_node.quantity} appraisal:{round(first_buy_queue_node.appraisal, 5)} premium差:{round(first_buy_queue_node.premium, 4)};"
-                      f"   {first_sell_queue_node.code}买入,price:{round(first_sell_queue_node.price, 4)} quantity:{first_sell_queue_node.quantity} appraisal:{round(first_sell_queue_node.appraisal, 5)} premium差:{round(first_sell_queue_node.premium, 4)};")
-                self.to_sell(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal, False)
-                print(f"prepare to buy {first_buy_queue_node.code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-                self.to_buy(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal, False)
-                # time.sleep(0.5)
-                self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
-                data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
-                return
+            else:
+                ## 如果钱不够了，买卖队列进行匹配，如果先卖后买有利 then do it
+                # 如果买卖队列没有，无法匹配直接结束
+                if first_sell_queue_node is None or first_buy_queue_node is None:
+                    return
+                # 必须更新到自己的时候才能进行决策，否则old data可能已经失效了
+                if first_sell_queue_node.code != stock_code and first_buy_queue_node.code != stock_code:
+                    return
+                # 需要保证买卖队列的数据都是最新的
+                if (date_utils.get_current_millisecond() - first_sell_queue_node.update_time) / 1000 > 2.8:
+                    self.sell_queue.remove_stock(first_sell_queue_node.code)
+                    return
+                if (date_utils.get_current_millisecond() - first_buy_queue_node.update_time) / 1000 > 2.8:
+                    self.sell_queue.remove_stock(first_buy_queue_node.code)
+                    return
+                # 买卖队列有利，并且可买的两完全覆盖卖的量,sell是正数，buy是负数，
+                # 防止卖了买不进去，卖的premium差必须小于基准值
+                # print(f"[先卖后买]日志: 第一个条件[{(first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold))}]"
+                #       f"第二个条件[{(first_sell_queue_node.quantity * first_sell_queue_node.price >= self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] * first_buy_queue_node.price)}]"
+                #       f"第三个条件[{self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] > 0}, {self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num']}]"
+                #       f"第四个条件[{first_buy_queue_node.premium > -self.base_premium_threshold}]"
+                #       f"一 {first_sell_queue_node.premium} > {abs(first_buy_queue_node.premium)} + {Decimal(self.base_premium_threshold)}"
+                #       f"二 {first_sell_queue_node.quantity} * {first_sell_queue_node.price} >= {self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num']} * {first_buy_queue_node.price}"
+                #       f"四 {first_buy_queue_node.premium} > {-self.base_premium_threshold}")
+                if ((first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold)) and
+                        (first_sell_queue_node.quantity * first_sell_queue_node.price >= self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] * first_buy_queue_node.price) and
+                        self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] > 0 and first_buy_queue_node.premium > -self.base_premium_threshold):
+                    # 操作之前，先从队列中移出去
+                    self.buy_queue.remove_stock(first_buy_queue_node.code)
+                    self.sell_queue.remove_stock(first_sell_queue_node.code)
+                    # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
+                    print(f"队列策略[先卖后买]触发: {stock_code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\r\n"
+                          f" {first_buy_queue_node.code}卖出, price:{round(first_buy_queue_node.price, 4)} quantity:{first_buy_queue_node.quantity} appraisal:{round(first_buy_queue_node.appraisal, 5)} premium差:{round(first_buy_queue_node.premium, 4)};"
+                          f"   {first_sell_queue_node.code}买入,price:{round(first_sell_queue_node.price, 4)} quantity:{first_sell_queue_node.quantity} appraisal:{round(first_sell_queue_node.appraisal, 5)} premium差:{round(first_sell_queue_node.premium, 4)};")
+                    self.to_sell(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal, False)
+                    print(f"prepare to buy {first_buy_queue_node.code} {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    self.to_buy(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal, False)
+                    # time.sleep(0.5)
+                    self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
+                    data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
+                    return
+        finally:
+            total_time = time.time()
+            total_consume = total_time - start_time
+            step0_consume = total_time - step0
+            step1_consume = total_time - step1
+            step2_consume = total_time - step2
+            if total_consume >= 3:
+                print(f"耗时统计: step0: {step0_consume:.3f}, step1: {step1_consume:.3f}, step2: {step2_consume:.3f}, 总耗时: {total_consume:.3f}")
 
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
