@@ -11,6 +11,16 @@ logging.basicConfig(level=logging.INFO,
                     filemode='a')
 logger = logging.getLogger(__name__)
 
+MARKET_TIMES = {
+    "morning_open": d_time(9, 30),
+    "morning_close": d_time(11, 30),
+    "afternoon_open": d_time(13, 0),
+    "afternoon_close": d_time(15, 0),
+    "buffer_morning_open": d_time(9, 35),
+    "buffer_afternoon_open": d_time(13, 1),
+    "gonna_close": d_time(14, 52),
+}
+
 
 def enhance_stock_code(code, type='stock'):
     if type == 'index':
@@ -62,25 +72,19 @@ def should_print(gap):
 def is_market_closing():
     # 获取当前时间
     now = datetime.now()
-    morning_open_time = d_time(9, 30)
-    morning_close_time = d_time(11, 30)
-    afternoon_open_time = d_time(13, 1)
-    afternoon_close_time = d_time(15, 0)
     # 0-4 表示周一至周五
     if now.weekday() >= 5:
         return True
-    if morning_open_time <= now.time() <= morning_close_time:
+    if MARKET_TIMES['morning_open'] <= now.time() <= MARKET_TIMES['morning_close']:
         return False
-    if afternoon_open_time <= now.time() <= afternoon_close_time:
+    if MARKET_TIMES['afternoon_open'] <= now.time() <= MARKET_TIMES['afternoon_close']:
         return False
     return True
 
-def is_market_after_35():
+def is_market_after_buffer():
     now = datetime.now()
-    morning_open_time = d_time(9, 35)
-    return now.time() >= morning_open_time
+    return (MARKET_TIMES['buffer_morning_open'] <= now.time() <= MARKET_TIMES['morning_close']) or (MARKET_TIMES['buffer_afternoon_open'] <= now.time() <= MARKET_TIMES['afternoon_close'])
 
 def is_going_to_close():
     now = datetime.now()
-    going_to_close_time = d_time(14, 52)
-    return now.time() >= going_to_close_time
+    return now.time() >= MARKET_TIMES['gonna_close']

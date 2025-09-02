@@ -150,16 +150,17 @@ class Strategy1:
         try:
             if utils.is_market_closing():
                 return
+            step0 = time.time()
+
             stock_info = self.inner_stock_infos[stock_code]
             index_info = self.target_index_infos[stock_info['target_index']]
-            step0 = time.time()
+            step1 = time.time()
             # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
             if 'index_updated_time' in index_info:
                 if time.time() - index_info['index_updated_time'] >= 2:
                     self.sell_queue.remove_stock(stock_code)
                     self.buy_queue.remove_stock(stock_code)
                     return
-            step1 = time.time()
             # 双方未就绪，不处理
             if index_info['status'] == False or stock_info['status'] == False:
                 return
@@ -180,7 +181,7 @@ class Strategy1:
             # return
 
             # 9点35以后开始执行
-            if not utils.is_market_after_35() or utils.is_market_closing() == True:
+            if not utils.is_market_after_buffer() or utils.is_market_closing() == True:
                 return
             # 买一队列中，只有premium大于0就会立即被卖，所以只需要取队列头的第一个数据
             first_buy_queue_node = self.buy_queue.head
