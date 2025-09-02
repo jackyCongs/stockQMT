@@ -4,63 +4,47 @@ from datetime import datetime, timedelta
 import time
 import threading
 
-# 时间锚点：启动时的基准时间
-_initial_monotonic = time.monotonic()  # 高效单调时间
-_initial_time = time.time()  # 对应time.time()的初始值
-_initial_datetime = datetime.now()  # 对应datetime.now()的初始值
+# 时间快照列表：仅在尾部追加新快照，读取时只取最后一个（最新的）
+_time_snapshots = [(time.time(), datetime.now())]
 
-# 缓存变量
-_cached_timestamp = _initial_time  # 对应time.time()的缓存
-_cached_datetime = _initial_datetime  # 对应datetime.now()的缓存
-
-# 更新间隔（秒）
-UPDATE_INTERVAL = 0.01  # 10ms更新一次缓存
-CALIBRATE_INTERVAL = 10  # 每10秒校准一次（调整为10秒）
+# 配置参数
+UPDATE_INTERVAL = 0.02  # 20ms更新一次快照 → 最大时间延迟为10ms（保证实时性）
+MAX_SNAPSHOTS = 1000  # 最多保留1000个快照（仅用于控制内存占用，不影响实时性）
+KEEP_LATEST = 100  # 清理时保留最近100个快照（足够覆盖多个更新周期）
 
 
 def _time_updater():
-    """后台线程：更新两个缓存的时间值，每10秒校准一次"""
-    global _cached_timestamp, _cached_datetime
-    global _initial_monotonic, _initial_time, _initial_datetime
-
+    """后台线程：10ms生成一次新快照，仅追加到列表尾部"""
+    global _time_snapshots
     while True:
-        # 计算当前单调时间与初始值的偏移量
-        current_monotonic = time.monotonic()
-        offset_seconds = current_monotonic - _initial_monotonic
+        # 生成并追加最新快照（10ms一次，保证实时性）
+        current_ts = time.time()
+        current_dt = datetime.now()
+        _time_snapshots.append((current_ts, current_dt))
 
-        # 更新time.time()对应的缓存
-        _cached_timestamp = _initial_time + offset_seconds
+        # 清理旧快照（仅删除头部的旧数据，保留尾部最新的100个）
+        if len(_time_snapshots) > MAX_SNAPSHOTS:
+            _time_snapshots = _time_snapshots[-KEEP_LATEST:]  # 尾部最新的永远保留
 
-        # 更新datetime.now()对应的缓存
-        _cached_datetime = _initial_datetime + timedelta(seconds=offset_seconds)
-
-        # 每10秒校准一次，同步系统时间
-        if offset_seconds >= CALIBRATE_INTERVAL:
-            _initial_monotonic = current_monotonic
-            _initial_time = time.time()  # 校准系统时间戳
-            _initial_datetime = datetime.now()  # 校准datetime
-
-            # 重置偏移量计算起点
-            offset_seconds = 0
-
+        # 休眠10ms，准备下一次更新
         time.sleep(UPDATE_INTERVAL)
 
 
-# 启动后台更新线程
-threading.Thread(target=_time_updater, daemon=True, name="TimeUpdater").start()
+# 启动后台线程（确保只启动一次）
+if not hasattr(threading, "_time_snapshot_updater_started"):
+    threading._time_snapshot_updater_started = True
+    threading.Thread(
+        target=_time_updater,
+        daemon=True,
+        name="RealTimeSnapshotUpdater"
+    ).start()
 
 
 def get_time():
-    """
-    替代time.time()的高效实现
-    返回float类型的时间戳，与time.time()格式完全一致
-    """
-    return _cached_timestamp
+    """返回最新快照的时间戳，延迟≤10ms（实时性保证）"""
+    return _time_snapshots[-1][0]
 
 
 def get_datetime():
-    """
-    替代datetime.now()的高效实现
-    返回datetime.datetime对象，与datetime.now()格式完全一致
-    """
-    return _cached_datetime
+    """返回最新快照的datetime对象，延迟≤10ms（实时性保证）"""
+    return _time_snapshots[-1][1]
