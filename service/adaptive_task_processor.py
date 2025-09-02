@@ -4,7 +4,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import psutil
-from datetime import datetime
+from helper.time_utils import get_time, get_datetime
 
 
 class AdaptiveTaskProcessor:
@@ -38,7 +38,7 @@ class AdaptiveTaskProcessor:
                 last_count = current_count
 
                 # 打印监控信息
-                print(f"[监控] | {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}|"
+                print(f"[监控] | {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}|"
                       f" TPS: {tps}/秒 | 活跃线程: {threading.active_count()} | "
                       f"CPU使用率: {psutil.cpu_percent()}% | "
                       f"内存使用率: {psutil.virtual_memory().percent}% | "
@@ -50,9 +50,9 @@ class AdaptiveTaskProcessor:
     def _wrap_task(self, task, args, kwargs, submit_time):
         """任务包装器：统计任务数和处理时间"""
         try:
-            start_time = time.time()
+            start_time = get_time()
             task(*args, **kwargs)
-            end_time = time.time()
+            end_time = get_time()
             # print(
             #     f"任务执行耗时: {(end_time - start_time) * 1000:.1f}ms | 从提交到完成总耗时: {(end_time - submit_time) * 1000:.1f}ms")
 
@@ -66,7 +66,7 @@ class AdaptiveTaskProcessor:
 
     def submit_task(self, task, *args, **kwargs):
         """提交任务（支持优先级，0最高）"""
-        submit_time = time.time()
+        submit_time = get_time()
         try:
             # 非阻塞提交，队列满时返回False（可根据需求改为block=True）
             self.executor.submit(self._wrap_task, task, args, kwargs, submit_time)

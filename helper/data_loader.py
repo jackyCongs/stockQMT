@@ -1,6 +1,6 @@
 # coding=utf-8
-import time
 
+from helper.time_utils import get_time, get_datetime
 from db import stock as stock_db
 from db import strategy_record
 from datetime import datetime, timedelta
@@ -32,7 +32,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
     stocks = stock_db.get_stock_list(db_instance)
     pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
     first_stock_net_worth_date = json.loads(stocks[0]['net_worth'])['net_worth_date'].replace("-", "")
-    trading_dates = xtdata.get_trading_dates("SZ", first_stock_net_worth_date, datetime.now().strftime("%Y%m%d"))
+    trading_dates = xtdata.get_trading_dates("SZ", first_stock_net_worth_date, get_datetime().strftime("%Y%m%d"))
     for stock in stocks:
         try:
             if date_utils.is_today_trading():
@@ -48,7 +48,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
                 if net_worth['code'] != 200:
                     logger.error(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
                     continue
-                if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == datetime.now().strftime("%Y-%m-%d") \
+                if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d") \
                         and net_worth['bonus_date'] != net_worth['bonus_date']:
                     logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
                     net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
@@ -87,7 +87,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
 def fresh_holding(inner_stock_infos, holding):
     # 将holding转换为字典以便快速查询，键为股票代码
     holding_dict = {hold.stock_code: hold for hold in holding}
-    print(f"start fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    print(f"start fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     # 遍历所有股票信息，更新持仓状态和数量
     for stock_code, info in inner_stock_infos.items():
@@ -108,7 +108,7 @@ def fresh_holding(inner_stock_infos, holding):
                 'hold_status': 0,
                 'hold_can_use_num': 0
             })
-    print(f"done fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+    print(f"done fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 
 def load_stock(db_instance, stock_codes, stock_infos, holding):
@@ -200,7 +200,7 @@ def get_rest_index(target_index_infos):
 
 
 def get_previous_date():
-    today = datetime.now()
+    today = get_datetime()
     end_time = today.strftime('%Y%m%d')
     # 计算15天前的日期
     fifteen_days_ago = today - timedelta(days=15)

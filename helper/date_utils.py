@@ -2,6 +2,8 @@
 from datetime import datetime
 from xtquant import xtdata
 import time
+from helper.time_utils import get_time, get_datetime
+
 
 # 传参毫秒级
 def transfer_date(timestamp):
@@ -12,14 +14,17 @@ def transfer_date(timestamp):
     # 输出: 2025-03-07
     return dt.strftime('%Y-%m-%d')
 
+
 # 今天是否是交易日
 def is_today_trading():
-    current_date = datetime.now().strftime("%Y%m%d")
+    current_date = get_datetime().strftime("%Y%m%d")
     trading_dates = xtdata.get_trading_dates("SZ", current_date, current_date)
     return len(trading_dates) >= 1
 
+
 def get_current_second():
-    return int(time.time())
+    return int(get_time())
+
 
 def get_current_millisecond():
-    return int(time.time() * 1000)
+    return int(get_time() * 1000)

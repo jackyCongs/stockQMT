@@ -1,10 +1,10 @@
 # coding=utf-8
 
-import time
 import logging
-from datetime import datetime, time as d_time
+from datetime import time as d_time
+from helper.time_utils import get_time, get_datetime
 
-last_print_time = time.time()
+last_print_time = get_time()
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
                     filename='logs/app.log',
@@ -61,7 +61,7 @@ def purified_code(code):
 
 
 def should_print(gap):
-    current_time = time.time()
+    current_time = get_time()
     global last_print_time
     if current_time - last_print_time >= gap:
         last_print_time = current_time
@@ -71,7 +71,7 @@ def should_print(gap):
 
 def is_market_closing():
     # 获取当前时间
-    now = datetime.now()
+    now = get_datetime()
     # 0-4 表示周一至周五
     if now.weekday() >= 5:
         return True
@@ -82,9 +82,9 @@ def is_market_closing():
     return True
 
 def is_market_after_buffer():
-    now = datetime.now()
+    now = get_datetime()
     return (MARKET_TIMES['buffer_morning_open'] <= now.time() <= MARKET_TIMES['morning_close']) or (MARKET_TIMES['buffer_afternoon_open'] <= now.time() <= MARKET_TIMES['afternoon_close'])
 
 def is_going_to_close():
-    now = datetime.now()
+    now = get_datetime()
     return now.time() >= MARKET_TIMES['gonna_close']

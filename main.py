@@ -4,9 +4,9 @@ from xtquant import xtdata
 from db.db_pool import DBPool
 from service import Trader_service, Trans_flows, Stock_service
 import logging
-import time
 from strategies import  Strategy1, Strategy2
 import sys
+from helper.time_utils import get_time
 
 logging.basicConfig(level=logging.INFO,
                     format='%(message)s',
@@ -19,7 +19,7 @@ xtdata.enable_hello = False
 db = DBPool()
 # 交易服务
 traderService = None
-session_id = round(time.time())
+session_id = round(get_time())
 
 
 if __name__ == '__main__':
@@ -41,7 +41,6 @@ if __name__ == '__main__':
             traderService.xt_trader.run_forever()
             #xtdata.run()
         except Exception as e:
-            e.with_traceback()
             logging.error(e)
         finally:
             # 释放线程池
