@@ -76,7 +76,10 @@ class Trans_flows:
                         if row['成交数量'] == 0:
                             # 成交金额空，数量也空没有实际意义，直接忽略
                             continue
-                        if strategy_flows.get_flow_by_trans_sequence(self.connection, row['成交序号']):
+                        trans_sequence_flow = strategy_flows.get_flow_by_trans_sequence(self.connection, row['成交序号'], row['证券代码'])
+                        if trans_sequence_flow and trans_sequence_flow['status'] == 1:
+                            exit(f"成交序号: {row['成交序号']} 已经存在，需要验证是否出现重复序号，如果唯一成交序号重复，需要手动修改一下前序号")
+                        if trans_sequence_flow:
                             print(f"成交序号: {row['成交序号']} 已经存在，处理忽略")
                             continue
                         strategy_flows.insert_strategy_flow(self.connection,
@@ -86,10 +89,9 @@ class Trans_flows:
                     else:
                         # 赎回到账
                         # trans_sequence 如果已经存在了就忽略
-                        trans_sequence_flow = strategy_flows.get_flow_by_trans_sequence(self.connection, row['成交序号'])
+                        trans_sequence_flow = strategy_flows.get_flow_by_trans_sequence(self.connection, row['成交序号'], row['证券代码'])
                         if trans_sequence_flow and trans_sequence_flow['status'] == 1:
-                            print(f"成交序号: {row['成交序号']} 已经存在，处理忽略")
-                            continue
+                            exit(f"成交序号: {row['成交序号']} 已经存在，需要人工介入查看")
                         incomplete_flow = strategy_flows.get_incomplete_flow_by_stock_code(self.connection, row['证券代码'])
                         other_fee = self.check_redemption(incomplete_flow, row)
                         changed_amount = round(row['成交金额'] - other_fee, 2)
@@ -149,6 +151,6 @@ class Trans_flows:
         if math.fabs(other_fee / row['成交金额'] * 100) > 1: # and int(row['成交序号']) != 6000049012:
             print(row)
             print(incomplete_flow)
-            exit("other_fee过大，需要人工介入核实")
+            exit(f"other_fee过大: {other_fee}, 占比: {math.fabs(other_fee / row['成交金额'] * 100)}%，需要人工介入核实")
         self.check_common_transaction(incomplete_flow['num'], row['成交价格'], other_fee, row['成交金额'], row['资金余额'])
         return other_fee

@@ -151,6 +151,10 @@ class Strategy1:
             if utils.is_market_closing():
                 return
             step0 = get_time()
+            # 有可能会执行超时，在这里超时直接阻断
+            if step0 - start_time >= 2:
+                print(f"阻断，执行时间过长, step0 执行时间{(step0 - start_time):.3f}s")
+                return
 
             stock_info = self.inner_stock_infos[stock_code]
             index_info = self.target_index_infos[stock_info['target_index']]

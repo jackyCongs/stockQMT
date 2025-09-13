@@ -61,11 +61,17 @@ def get_max_flows_trans_date(connection):
         return None
 
 
-def get_flow_by_trans_sequence(connection, trans_sequence):
+
+def get_flow_by_trans_sequence(connection, trans_sequence, stock_code):
     try:
         with connection.cursor() as cursor:
-            sql = f"SELECT * FROM strategy_flows WHERE trans_sequence = %s"
-            cursor.execute(sql, (trans_sequence,))
+            sql = """
+                SELECT * FROM strategy_flows
+                WHERE trans_sequence = %s
+                  AND stock_code = %s
+                  AND trans_date >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 15 DAY), '%%Y%%m%%d')
+            """
+            cursor.execute(sql, (trans_sequence, str(stock_code)))
             return cursor.fetchone()
     except Error as e:
         print(f"数据库查询失败: {e}")
