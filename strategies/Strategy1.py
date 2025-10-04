@@ -96,6 +96,9 @@ class Strategy1:
                     round((msgs[code]['lastPrice'] - msgs[code]['lastClose']) / msgs[code]['lastClose'], 6)),
                 'status': True,
             })
+            # 查看某指数的数据
+            # if utils.purified_code(code) == "399975":
+            #     print(msgs[code])
             # logger.info(f"index_handler-{msgs[code]}")
             # 逐个分析关联的code
             for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:
@@ -259,6 +262,9 @@ class Strategy1:
         # premium符合要求，并且委卖大于最小买入金额，并且已经持有的金额不超过最大限制，维护到双向链表队列中
         appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
+        # 查看某具体股票的数据
+        # if stock_code == "502010.SH":
+        #     print(f"appraisal: {appraisal}, {stock_info['last_net_worth']}, {index_info['increase_rate']}, {stock_info['withdraw_commission_7rate']}")
         if float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100 + self.min_bid_money < self.max_bid_money:
             if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
                 self.sell_queue.remove_stock(stock_code)
