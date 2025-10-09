@@ -98,7 +98,7 @@ class Strategy1:
             })
             # 查看某指数的数据
             # if utils.purified_code(code) == "399975":
-            #     print(msgs[code])
+            #     print(f'特别观察: {round((msgs[code]["lastPrice"] - msgs[code]["lastClose"]) / msgs[code]["lastClose"] * 100, 6)}%, {msgs[code]}')
             # logger.info(f"index_handler-{msgs[code]}")
             # 逐个分析关联的code
             for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:

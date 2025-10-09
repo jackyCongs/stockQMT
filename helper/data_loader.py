@@ -32,11 +32,12 @@ def load_inner_stock(db_instance, inner_stock_infos):
     stocks = stock_db.get_stock_list(db_instance)
     first_stock_net_worth_date = json.loads(stocks[0]['net_worth'])['net_worth_date'].replace("-", "")
     trading_dates = xtdata.get_trading_dates("SZ", first_stock_net_worth_date, get_datetime().strftime("%Y%m%d"))
-    if date_utils.is_today_trading():
+    is_today_trading = date_utils.is_today_trading()
+    if is_today_trading:
         worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 2])
     else:
         worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 1])
-    print(f"上一日交易、净值日期为: {worth_date}，请输入 'yes' 继续或 'no' 退出: ")
+    print(f"上一日交易、净值日期为: {worth_date}, 今天是否是交易日：{is_today_trading}, 请输入 'yes' 继续或 'no' 退出: ")
     while True:
         user_input = input().strip().lower()
         if user_input == 'yes':
@@ -51,10 +52,6 @@ def load_inner_stock(db_instance, inner_stock_infos):
     pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
     for stock in stocks:
         try:
-            if date_utils.is_today_trading():
-                worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 2])
-            else:
-                worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 1])
             net_worth = None
             if stock['net_worth']:
                 net_worth = json.loads(stock['net_worth'])
