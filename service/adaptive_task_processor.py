@@ -43,7 +43,7 @@ class AdaptiveTaskProcessor:
                       f"CPU使用率: {psutil.cpu_percent()}% | "
                       f"内存使用率: {psutil.virtual_memory().percent}% | "
                       f"线程池大小: {self.executor._max_workers}")
-                time.sleep(10)
+                time.sleep(20)
 
         threading.Thread(target=monitor, daemon=True, name="SystemMonitor").start()
 

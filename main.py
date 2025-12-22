@@ -1,5 +1,6 @@
 # coding=utf-8
-
+import time
+import traceback
 from xtquant import xtdata
 from db.db_pool import DBPool
 from service import Trader_service, Trans_flows, Stock_service
@@ -28,8 +29,8 @@ if __name__ == '__main__':
     traderService = Trader_service.Trader_service(session_id)
     if len(sys.argv) > 1 and int(sys.argv[1]) == 1:
         Trans_flows.Trans_flows(traderService.get_asset()).run()
-        exit("accounting done")
-    if len(sys.argv) > 1 and int(sys.argv[1]) == 2:
+        print("accounting done")
+        time.sleep(3)
         Stock_service.Stock_service(db).update_stock_price()
         exit("stock price updated done")
     while True:
@@ -41,7 +42,9 @@ if __name__ == '__main__':
             traderService.xt_trader.run_forever()
             #xtdata.run()
         except Exception as e:
-            logging.error(e)
+            print(f"捕获到异常：{e}")  # 打印异常描述
+            # 打印详细的错误位置信息（包括文件名、行号等）
+            traceback.print_exc()
         finally:
             # 释放线程池
             db.close()

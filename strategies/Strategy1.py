@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO,
                     filemode='a')
 logger = logging.getLogger(__name__)
 
+rest_index_push_count = 0
 
 class Strategy1:
     def __init__(self, db, traderService):
@@ -39,6 +40,8 @@ class Strategy1:
         self.buy_queue = stock_queue.StockQueue()
         self.locks = {}
         self.processor = adaptive_task_processor.AdaptiveTaskProcessor()
+
+        self.spider_cookie = 'qgqp_b_id=cc1897aac4f07c77d00260f5336e636a; st_nvi=n_ig8DMmih7vyVepFV-rO3463; nid=0bbb6ef76661f2ea8518b074ed10795c; nid_create_time=1759108160426; gvi=9kBn8gog09BOvw6oxTZb0c044; gvi_create_time=1759108160426; mtp=1; ct=qXJ7p_b0tTxbdhbEsUUII8tSAkioGY0X09xiBqdk_PQ3SAw7KWTz9k5D_hF-xTv2zzKJRvXFgddwTulWw0Xe74I4Jlj0a7Pjo6AT5K1kQdmcIN-IjI4UdbkQNUdXMl05NLDi3njE-bKXE0jgv-36l6QAqFfhZY3fYEqk-C38O1k; ut=FobyicMgeV54OLFNgnrRk6tRIfhkpfmmwhXqBsHsreHL1TS1BzgeJDLlFQyscSLDQ89gDk2aAxV5CaneW33dw4X5AotnDYGGvjcsLpQwIwCfb-EaelfUTiA4XWeS9ToOybaxJP0HDV7tF8nbuvevQsRPFl3en81vU8xtyOlJuHOrRSkuhzxJbwzgXYsBQ1-b-q2VGk5WnlZFeqnADZfgjrJh-7dTy2ZTlG3bYh6bk5WiEQCB8TvBGt9TOP0FtGIEYvzgHXQcHghsDPu6xPDQUH9nNZ7LIj8G; pi=1240037623276744%3Bi1240037623276744%3B%E8%82%A1%E5%8F%8B99dc898166%3Bloj2Lv%2FD%2F9Ct55aoQaElgt%2FG%2FPTNM2HbafQLw47mrkmf6cyoW4rA9npFHgkbiB2QoE%2F%2FZEkoMpPjkZARUYRam1X3kx85HJFZ7E55ZzEIA1Yh7yUUY4ZL8R3Xnj7lVaCcmkvPYS1jPDkiz2nT%2FaB%2FhxWmHUZoh%2BUkjg8eQl%2B3URJ3yKjmzV%2BGWpcZK4sP3DoMld2LxoQ1%3BMyrVmvvD6DCd546fiYpL1yRVRNd71eOI2H%2FNKkrSjMl40a8Ft24uwJyYUDcPbHx3zn%2FxMpahW6pfkRrSVOj6QbZ2x4mxLMQ9sRebIhiKSKgeb3Tt2Qm0CbPyl%2BHXZ8wU75dKogbb%2FYUFZer036vHPdLYJlMtrw%3D%3D; uidal=1240037623276744%e8%82%a1%e5%8f%8b99dc898166; sid=; vtpst=|; st_pvi=53448496909725; st_sp=2025-03-08%2022%3A34%3A17; st_inirUrl=https%3A%2F%2Ffund.eastmoney.com%2F160630.html'
 
     def _get_lock(self, stock_code):
         # 如果stock_code对应的锁不存在，则创建一个新的锁
@@ -63,7 +66,7 @@ class Strategy1:
         rest_index_codes = data_loader.get_rest_index(self.target_index_infos)
         logger.info(f"rest_index_codes数量: {len(rest_index_codes)}, {rest_index_codes}")
         # 异步多线程通过第三方订阅没有检测到的指数信息
-        threading.Thread(target=self.subscribe_rest_index_stock, args=(rest_index_codes,)).start()
+        self.subscribe_rest_index_stock(rest_index_codes)
 
     def stock_handler(self, msgs):
         for code in msgs:
@@ -106,44 +109,47 @@ class Strategy1:
                 # threading.Thread(target=self.analysis_and_decision_mking, args=(stock_code,)).start()
 
     def subscribe_rest_index_stock(self, rest_index_codes):
-        while True:
-            if utils.is_market_closing():
-                time.sleep(3)
-                continue
+        for index_code in rest_index_codes:
+            threading.Thread(target=spider.stream_listener, args=(index_code, self.spider_cookie, self.subscribe_detail_index_stock)).start()
+            time.sleep(0.5)
+        # if utils.is_market_closing():
 
-            # 在这里多线程执行subscribe_detail_index_stock
-            for index_code in rest_index_codes:
-                self.semaphore.acquire()
-                self.processor.submit_task(self.subscribe_detail_index_stock, index_code)
-                # threading.Thread(target=self.subscribe_detail_index_stock, args=(index_code,)).start()
-                time.sleep(0.3)
-            time.sleep(3)
-
-    def subscribe_detail_index_stock(self, index_code):
+    def subscribe_detail_index_stock(self, line, index_code):
+        global rest_index_push_count
         try:
-            resp = spider.get_current_index_info(index_code)
-            if resp is None:
+            data = json.loads(line.replace('data: ', ''))
+            if data['data'] == "null" or data['data'] is None:
+                # print(f"{index_code}: {data['data']}")
                 return
+            # 记录last day数据
+            if 'f60' in data['data']:
+                self.target_index_infos[index_code].update({'start': Decimal(data['data']['f60'])})
+            if 'f43' not in data['data']:
+                logger.warning(f"{index_code} [subscribe_detail_index_stock] 发生错误，关键ke数据不存在- {line}")
+                return
+            resp = {'current_index': data['data']['f43']}
             current_index = Decimal(resp['current_index'])
             if current_index <= 0:
                 return
             self.target_index_infos[index_code].update({
                 # 只有从这里更新的指数数据有这个key，防止连接中断后依据死数据做决策
                 'index_updated_time': get_time(),
-                'start': resp['last_close'],
                 'current': resp['current_index'],
                 'increase_rate': Decimal(
-                    round((Decimal(resp['current_index']) - Decimal(resp['last_close'])) / Decimal(resp['last_close']), 6)),
+                    round((Decimal(resp['current_index']) - self.target_index_infos[index_code]['start']) / self.target_index_infos[index_code]['start'], 6)),
                 'status': True,
             })
             for stock_code in self.target_index_infos[utils.purified_code(index_code)]['relation']:
                 self.processor.submit_task(self.analysis_and_decision_mking, stock_code)
                 # threading.Thread(target=self.analysis_and_decision_mking, args=(stock_code,)).start()
+
+            rest_index_push_count += 1
+            if rest_index_push_count % 250 == 0:
+                rest_index_push_count = 0
+                print(f"[{index_code}]-{self.target_index_infos[index_code]}")
         except IOError as e:
             print(e)
             return
-        finally:
-            self.semaphore.release()
 
     def analysis_and_decision_mking(self, stock_code):
         start_time = get_time()
@@ -156,7 +162,7 @@ class Strategy1:
             step0 = get_time()
             # 有可能会执行超时，在这里超时直接阻断
             if step0 - start_time >= 2:
-                print(f"阻断，执行时间过长, step0 执行时间{(step0 - start_time):.3f}s")
+                logger.warning(f"阻断，执行时间过长, step0 执行时间{(step0 - start_time):.3f}s")
                 return
 
             stock_info = self.inner_stock_infos[stock_code]
