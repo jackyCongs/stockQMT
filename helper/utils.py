@@ -5,10 +5,6 @@ from datetime import time as d_time
 from helper.time_utils import get_time, get_datetime
 
 last_print_time = get_time()
-logging.basicConfig(level=logging.INFO,
-                    format='%(message)s',
-                    filename='logs/app.log',
-                    filemode='a')
 logger = logging.getLogger(__name__)
 
 MARKET_TIMES = {
@@ -22,7 +18,7 @@ MARKET_TIMES = {
 }
 
 
-def enhance_stock_code(code, type='stock'):
+def enhance_stock_code(code, type='stock', ignore_warning = False):
     if type == 'index':
         if code.startswith('000'):
             return f"{code}.SH"
@@ -30,7 +26,8 @@ def enhance_stock_code(code, type='stock'):
             return f"{code}.SZ"
         if code.startswith("9"):
             return code
-        logger.info(f"当前 code: {code}-{type}, 无对应来源")
+        if not ignore_warning:
+            logger.warning(f"当前 code: {code}-{type}, 无对应来源")
         return code
     # 上证
     if len(code) == 6 and (code.startswith('6') or code.startswith('900') or code.startswith('5')):
@@ -42,6 +39,8 @@ def enhance_stock_code(code, type='stock'):
     logger.info(f"当前 code: {code}-{type}, 无对应来源")
     return code
 
+def is_target_index(code):
+    return enhance_stock_code(purified_code(code), 'index', True) == code
 
 def get_derive_by_code(code, type = 'index'):
     if type != 'index':

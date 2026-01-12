@@ -2,18 +2,10 @@
 
 import pymysql
 from db import strategy_flows
+from db.db_pool import DBPool
 import math
 import pandas as pd
 import configparser
-
-db_config = {
-    'host': '47.104.167.147',
-    'user': 'root',
-    'password': '211314ok',
-    'database': 'bill',
-    'charset': 'utf8mb4',
-    'cursorclass': pymysql.cursors.DictCursor
-}
 
 
 def load_config():
@@ -23,14 +15,25 @@ def load_config():
         exit("文件名存在异常")
     return config
 
-class Trans_flows:
-    def __init__(self, asset):
+class TransFlows:
+    def __init__(self, asset, platform):
+        db = DBPool()
         self.asset = asset
         self.available_balance = 0
-        self.connection = pymysql.connect(**db_config)
+        self.platform = platform
+        self.connection = db.get_connection()
         # 关闭自动提交，开启以天为单位的事务，要么全部成功要么全部失败
         self.connection.autocommit(False)
         self.config = load_config()
+
+    def get_file(self):
+        if self.platform is None:
+            exit("platform未知，无法获取到对账文件")
+        if self.platform == "大同":
+            return self.config['FLOWS']['file']
+        if self.platform == "湘财":
+            return self.config['FLOWS']['xiangcai_file']
+        exit("platform未知，无法获取到对账文件")
 
     def check_result(self):
         if self.available_balance != self.asset.cash:
@@ -45,7 +48,7 @@ class Trans_flows:
 
         self.available_balance = float(last_flows['remained_amount'])
         last_update_date = int(last_trans_date)
-        df = pd.read_excel(self.config['FLOWS']['file'], engine='openpyxl')  # 如果文件是.xlsx格式
+        df = pd.read_excel(self.get_file(), engine='openpyxl')  # 如果文件是.xlsx格式
         # df = pd.read_csv(self.config['FLOWS']['file'], encoding="latin1")
         current_process_date = 0
 

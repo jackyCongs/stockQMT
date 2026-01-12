@@ -1,4 +1,7 @@
 # coding=utf-8
+import logging
+
+logger = logging.getLogger(__name__)
 
 class StockNode:
     def __init__(self, code, name, quantity, price, premium, real_premium, appraisal, update_time):
@@ -89,5 +92,8 @@ class StockQueue:
         current = self.head
         print()
         while current:
-            print(f"[{current.code}] {current.name} 估值: {round(current.appraisal, 5)} premium: {round(current.premium, 3)}% real_premium: {round(current.real_premium, 3)}% 价格: {round(current.price, 3)} 数量 {current.quantity} 总价 {round(current.quantity*current.price*100, 2)}")
+            logger.info(f"[{current.code}] {current.name} 估值: {round(current.appraisal, 5)} premium: {round(current.premium, 3)}% real_premium: {round(current.real_premium, 3)}% 价格: {round(current.price, 3)} 数量 {current.quantity} 总价 {round(current.quantity*current.price*100, 2)}")
             current = current.next
+
+    def maintain_premium_queues(self):
+        pass

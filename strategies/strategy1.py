@@ -12,16 +12,13 @@ import threading
 from service import stock_queue, adaptive_task_processor
 from helper.time_utils import get_time, get_datetime
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(message)s',
-                    filename='logs/app.log',
-                    filemode='a')
 logger = logging.getLogger(__name__)
-
 rest_index_push_count = 0
 
 class Strategy1:
-    def __init__(self, db, traderService):
+    def __init__(self, db, trader_service):
+        # 预留的钱雷打不动，用来提出
+        self.frozen_money = 0
         # 等待被初始化的全局场内基金
         self.inner_stock_infos = {}
         # 等待被初始化的全局指数
@@ -33,13 +30,15 @@ class Strategy1:
         self.min_bid_money = 500
         self.base_premium_threshold = 0.25
         self.db = db
-        self.traderService = traderService
+        self.trader_service = trader_service
+        self.market_closing = True
         # 多线程请求时，最多5个线程
         self.semaphore = threading.Semaphore(1)
         self.sell_queue = stock_queue.StockQueue()
         self.buy_queue = stock_queue.StockQueue()
         self.locks = {}
         self.processor = adaptive_task_processor.AdaptiveTaskProcessor()
+        self.strategy_etf_type = "lof"
 
         self.spider_cookie = 'qgqp_b_id=cc1897aac4f07c77d00260f5336e636a; st_nvi=n_ig8DMmih7vyVepFV-rO3463; nid=0bbb6ef76661f2ea8518b074ed10795c; nid_create_time=1759108160426; gvi=9kBn8gog09BOvw6oxTZb0c044; gvi_create_time=1759108160426; mtp=1; ct=qXJ7p_b0tTxbdhbEsUUII8tSAkioGY0X09xiBqdk_PQ3SAw7KWTz9k5D_hF-xTv2zzKJRvXFgddwTulWw0Xe74I4Jlj0a7Pjo6AT5K1kQdmcIN-IjI4UdbkQNUdXMl05NLDi3njE-bKXE0jgv-36l6QAqFfhZY3fYEqk-C38O1k; ut=FobyicMgeV54OLFNgnrRk6tRIfhkpfmmwhXqBsHsreHL1TS1BzgeJDLlFQyscSLDQ89gDk2aAxV5CaneW33dw4X5AotnDYGGvjcsLpQwIwCfb-EaelfUTiA4XWeS9ToOybaxJP0HDV7tF8nbuvevQsRPFl3en81vU8xtyOlJuHOrRSkuhzxJbwzgXYsBQ1-b-q2VGk5WnlZFeqnADZfgjrJh-7dTy2ZTlG3bYh6bk5WiEQCB8TvBGt9TOP0FtGIEYvzgHXQcHghsDPu6xPDQUH9nNZ7LIj8G; pi=1240037623276744%3Bi1240037623276744%3B%E8%82%A1%E5%8F%8B99dc898166%3Bloj2Lv%2FD%2F9Ct55aoQaElgt%2FG%2FPTNM2HbafQLw47mrkmf6cyoW4rA9npFHgkbiB2QoE%2F%2FZEkoMpPjkZARUYRam1X3kx85HJFZ7E55ZzEIA1Yh7yUUY4ZL8R3Xnj7lVaCcmkvPYS1jPDkiz2nT%2FaB%2FhxWmHUZoh%2BUkjg8eQl%2B3URJ3yKjmzV%2BGWpcZK4sP3DoMld2LxoQ1%3BMyrVmvvD6DCd546fiYpL1yRVRNd71eOI2H%2FNKkrSjMl40a8Ft24uwJyYUDcPbHx3zn%2FxMpahW6pfkRrSVOj6QbZ2x4mxLMQ9sRebIhiKSKgeb3Tt2Qm0CbPyl%2BHXZ8wU75dKogbb%2FYUFZer036vHPdLYJlMtrw%3D%3D; uidal=1240037623276744%e8%82%a1%e5%8f%8b99dc898166; sid=; vtpst=|; st_pvi=53448496909725; st_sp=2025-03-08%2022%3A34%3A17; st_inirUrl=https%3A%2F%2Ffund.eastmoney.com%2F160630.html'
 
@@ -50,13 +49,12 @@ class Strategy1:
         return self.locks[stock_code]
 
     def run(self):
-        data_loader.load_inner_stock(self.db, self.inner_stock_infos)
+        data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.strategy_etf_type)
         data_loader.load_target_index(self.inner_stock_infos, self.target_index_infos)
-        data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
+        data_loader.fresh_holding(self.inner_stock_infos, self.trader_service.get_holding())
 
-        SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(self.db), callback=self.stock_handler)
-        SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(self.inner_stock_infos),
-                                            callback=self.index_handler)
+        SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(self.db, self.strategy_etf_type), callback=self.stock_handler)
+        SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(self.inner_stock_infos), callback=self.index_handler)
 
         logger.info(f"策略1启动，订阅成功: SId1-{SId1}, SId2-{SId2}\r")
 
@@ -64,16 +62,17 @@ class Strategy1:
         # 5秒后，开始用另一种方式监听没有订阅到的指数
         logger.info(f"loading rest index...")
         rest_index_codes = data_loader.get_rest_index(self.target_index_infos)
-        logger.info(f"rest_index_codes数量: {len(rest_index_codes)}, {rest_index_codes}")
+        logger.info(f"rest_index_codes nums: {len(rest_index_codes)}, {rest_index_codes}")
         # 异步多线程通过第三方订阅没有检测到的指数信息
         self.subscribe_rest_index_stock(rest_index_codes)
 
     def stock_handler(self, msgs):
+        self.market_closing = utils.is_market_closing()
         for code in msgs:
             # logger.info(f"订阅消息: stock-  {msgs[code]}")
             # 港股今天不交易，排除港股的数据
             #if '港' in self.inner_stock_infos[code]['name'] or 'H' in self.inner_stock_infos[code]['name'] or 'h' in self.inner_stock_infos[code]['name']:
-                #print(self.inner_stock_infos[code])
+                #logger.info(self.inner_stock_infos[code])
                 #continue
             self.inner_stock_infos[code].update({
                 'askPrice': msgs[code]['askPrice'],
@@ -101,7 +100,7 @@ class Strategy1:
             })
             # 查看某指数的数据
             # if utils.purified_code(code) == "399975":
-            #     print(f'特别观察: {round((msgs[code]["lastPrice"] - msgs[code]["lastClose"]) / msgs[code]["lastClose"] * 100, 6)}%, {msgs[code]}')
+            #     logger.info(f'特别观察: {round((msgs[code]["lastPrice"] - msgs[code]["lastClose"]) / msgs[code]["lastClose"] * 100, 6)}%, {msgs[code]}')
             # logger.info(f"index_handler-{msgs[code]}")
             # 逐个分析关联的code
             for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:
@@ -119,13 +118,13 @@ class Strategy1:
         try:
             data = json.loads(line.replace('data: ', ''))
             if data['data'] == "null" or data['data'] is None:
-                # print(f"{index_code}: {data['data']}")
+                # logger.info(f"{index_code}: {data['data']}")
                 return
             # 记录last day数据
             if 'f60' in data['data']:
                 self.target_index_infos[index_code].update({'start': Decimal(data['data']['f60'])})
             if 'f43' not in data['data']:
-                logger.warning(f"{index_code} [subscribe_detail_index_stock] 发生错误，关键ke数据不存在- {line}")
+                # logger.warning(f"{index_code} [subscribe_detail_index_stock] 发生错误，关键ke数据不存在- {line}")
                 return
             resp = {'current_index': data['data']['f43']}
             current_index = Decimal(resp['current_index'])
@@ -146,31 +145,27 @@ class Strategy1:
             rest_index_push_count += 1
             if rest_index_push_count % 250 == 0:
                 rest_index_push_count = 0
-                print(f"[{index_code}]-{self.target_index_infos[index_code]}")
+                logger.info(f"[{index_code}]-{self.target_index_infos[index_code]}")
         except IOError as e:
-            print(e)
+            logger.info(e)
             return
 
     def analysis_and_decision_mking(self, stock_code):
-        start_time = get_time()
-        step0 = start_time
-        step1 = start_time
-        step2 = start_time
+        start_time = time.perf_counter()
         try:
-            if utils.is_market_closing():
+            if self.market_closing:
                 return
-            step0 = get_time()
+            step0 = time.perf_counter()
             # 有可能会执行超时，在这里超时直接阻断
-            if step0 - start_time >= 2:
+            if step0 - start_time >= 1:
                 logger.warning(f"阻断，执行时间过长, step0 执行时间{(step0 - start_time):.3f}s")
                 return
 
             stock_info = self.inner_stock_infos[stock_code]
             index_info = self.target_index_infos[stock_info['target_index']]
-            step1 = get_time()
             # 来自链接第三方订阅的指数，如果更新时间超过5秒就不处理了
             if 'index_updated_time' in index_info:
-                if get_time() - index_info['index_updated_time'] >= 2:
+                if get_time() - index_info['index_updated_time'] >= 1:
                     self.sell_queue.remove_stock(stock_code)
                     self.buy_queue.remove_stock(stock_code)
                     return
@@ -183,16 +178,6 @@ class Strategy1:
                 return
             # 维护两个队列
             self.maintain_premium_queues(stock_code, stock_info, index_info)
-            step2 = get_time()
-            # print()
-            # print("#########################")
-            # print("sell")
-            # self.sell_queue.print_queue()
-            # print("buy")
-            # self.buy_queue.print_queue()
-            # print("#########################")
-            # return
-
             # 9点35以后开始执行
             if not utils.is_market_after_buffer() or utils.is_market_closing() == True:
                 return
@@ -200,16 +185,16 @@ class Strategy1:
             first_buy_queue_node = self.buy_queue.head
             first_sell_queue_node = self.sell_queue.head
             if first_buy_queue_node is not None and first_buy_queue_node.code == stock_code and first_buy_queue_node.premium > 0:
-                print(f"prepare to sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                logger.info(f"prepare to sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                 self.buy_queue.remove_stock(stock_code)
                 self.to_sell(stock_code, first_buy_queue_node.price, first_buy_queue_node.appraisal)
                 # 如果当前stock_code能卖，就一定不会有买入机会，直接结束
                 return
             # 如果钱够，遇到好的委卖数据果断买入
-            asset = self.traderService.get_asset()
+            asset = self.trader_service.get_asset()
             if asset.cash >= self.min_bid_money:
                 if first_sell_queue_node is not None and first_sell_queue_node.code == stock_code:
-                    print(f"prepare to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    logger.info(f"prepare to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                     self.sell_queue.remove_stock(stock_code)
                     self.to_buy(stock_code, first_sell_queue_node.price, first_sell_queue_node.appraisal)
                 return
@@ -230,7 +215,7 @@ class Strategy1:
                     return
                 # 买卖队列有利，并且可买的两完全覆盖卖的量,sell是正数，buy是负数，
                 # 防止卖了买不进去，卖的premium差必须小于基准值
-                # print(f"[先卖后买]日志: 第一个条件[{(first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold))}]"
+                # logger.info(f"[先卖后买]日志: 第一个条件[{(first_sell_queue_node.premium > Decimal(abs(first_buy_queue_node.premium)) + Decimal(self.base_premium_threshold))}]"
                 #       f"第二个条件[{(first_sell_queue_node.quantity * first_sell_queue_node.price >= self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] * first_buy_queue_node.price)}]"
                 #       f"第三个条件[{self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] > 0}, {self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num']}]"
                 #       f"第四个条件[{first_buy_queue_node.premium > -self.base_premium_threshold}]"
@@ -244,24 +229,21 @@ class Strategy1:
                     self.buy_queue.remove_stock(first_buy_queue_node.code)
                     self.sell_queue.remove_stock(first_sell_queue_node.code)
                     # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
-                    print(f"队列策略[先卖后买]触发: {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\r\n"
+                    logger.info(f"队列策略[先卖后买]触发: {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\r\n"
                           f" {first_buy_queue_node.code}卖出, price:{round(first_buy_queue_node.price, 4)} quantity:{first_buy_queue_node.quantity} appraisal:{round(first_buy_queue_node.appraisal, 5)} premium差:{round(first_buy_queue_node.premium, 4)};"
                           f"   {first_sell_queue_node.code}买入,price:{round(first_sell_queue_node.price, 4)} quantity:{first_sell_queue_node.quantity} appraisal:{round(first_sell_queue_node.appraisal, 5)} premium差:{round(first_sell_queue_node.premium, 4)};")
                     self.to_sell(first_buy_queue_node.code, first_buy_queue_node.price, first_buy_queue_node.appraisal, False)
-                    print(f"prepare to buy {first_buy_queue_node.code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    logger.info(f"prepare to buy {first_buy_queue_node.code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                     self.to_buy(first_sell_queue_node.code, first_sell_queue_node.price, first_sell_queue_node.appraisal, False)
                     # time.sleep(0.5)
                     self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
-                    data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
+                    data_loader.fresh_holding(self.inner_stock_infos, self.trader_service.get_holding())
                     return
         finally:
-            total_time = get_time()
+            total_time = time.perf_counter()
             total_consume = total_time - start_time
-            step0_consume = total_time - step0
-            step1_consume = total_time - step1
-            step2_consume = total_time - step2
-            if total_consume >= 3:
-                print(f"耗时统计: step0: {step0_consume:.3f}, step1: {step1_consume:.3f}, step2: {step2_consume:.3f}, 总耗时: {total_consume:.3f}")
+            if total_consume >= 1:
+                logger.info(f"耗时统计: 总耗时: {total_consume:.3f}")
 
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
@@ -270,7 +252,7 @@ class Strategy1:
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         # 查看某具体股票的数据
         # if stock_code == "502010.SH":
-        #     print(f"appraisal: {appraisal}, {stock_info['last_net_worth']}, {index_info['increase_rate']}, {stock_info['withdraw_commission_7rate']}")
+        #     logger.info(f"appraisal: {appraisal}, {stock_info['last_net_worth']}, {index_info['increase_rate']}, {stock_info['withdraw_commission_7rate']}")
         if float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100 + self.min_bid_money < self.max_bid_money:
             if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
                 self.sell_queue.remove_stock(stock_code)
@@ -310,10 +292,10 @@ class Strategy1:
 
     def to_buy(self, stock_code, limit_price, appraisal, fresh_holding = True):
         # 卖不用管，买需要加锁，防止重复购买
-        print(f"to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        logger.info(f"to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         lock = self._get_lock(stock_code)
         lock.acquire()
-        print(f"to buy {stock_code}, got lock{get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        logger.info(f"to buy {stock_code}, got lock{get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         try:
             # 当卖盘不为空，并且卖1出价小于估值时，进一步再判断溢价空间
             stock_info = self.inner_stock_infos[stock_code]
@@ -326,14 +308,14 @@ class Strategy1:
                 premium = 0
                 first_premium = 0
                 hold_num = stock_info['hold_num']
-                asset = self.traderService.get_asset()
+                asset = self.trader_service.get_asset()
                 # 已经持仓的金额
                 holding_money = round(stock_info['hold_num'] * 100 * Decimal(stock_info['askPrice'][0]), 2)
                 max_able_bid_money = Decimal(self.max_bid_money) - Decimal(holding_money)
 
-                print(f"此时cash： {asset.cash}")
-                if asset.cash <= max_able_bid_money:
-                    max_able_bid_money = asset.cash
+                logger.info(f"此时cash： {asset.cash}")
+                if asset.cash - self.frozen_money <= max_able_bid_money:
+                    max_able_bid_money = asset.cash - self.frozen_money
 
                 for i, price in enumerate(stock_info['askPrice']):
                     if price > limit_price:
@@ -350,7 +332,7 @@ class Strategy1:
 
                 # 已经持有的够多了，没有再买的空间了
                 if max_able_bid_money < self.min_bid_money:
-                    print(f"{stock_code} 可买的太少了 {max_able_bid_money} < {self.min_bid_money}")
+                    logger.info(f"{stock_code} 可买的太少了 {max_able_bid_money} < {self.min_bid_money}")
                     return
                 if bid_money == 0:
                     return
@@ -367,33 +349,33 @@ class Strategy1:
                     logger.info(remark)
                     # 把bid_num放入到hold_num，防止超买
                     self.inner_stock_infos[stock_code].update({'hold_num': hold_num + round(bid_num)})
-                    order_id = self.traderService.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
+                    order_id = self.trader_service.async_buy(stock_code, bid_price, bid_num, "折价策略", self.inner_stock_infos, hold_num)
                     if order_id:
                         logger.info(f"order_id: {order_id}")
                         # buy加锁了，睡眠性能就相当差了，解除sleep看看
                         time.sleep(1)
-                        order = self.traderService.query_by_order_id(int(order_id))
+                        order = self.trader_service.query_by_order_id(int(order_id))
                         if not order:
                             # 撤单
-                            self.traderService.cancel(order_id)
+                            self.trader_service.cancel(order_id)
                         else:
                             if order.order_status != xtconstant.ORDER_SUCCEEDED:
                                 # 撤单
-                                self.traderService.cancel(order_id)
+                                self.trader_service.cancel(order_id)
                         # 更新持有信息
                         if fresh_holding:
-                            data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
+                            data_loader.fresh_holding(self.inner_stock_infos, self.trader_service.get_holding())
                     else:
                         logger.error("下单失败")
                     return
         finally:
-            print(f"release lock {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+            logger.info(f"release lock {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
             lock.release()
 
     def to_sell(self, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = self.inner_stock_infos[stock_code]
         index_info = self.target_index_infos[stock_info['target_index']]
-        print(f"to_sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        logger.info(f"to_sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         if len(stock_info['bidPrice']) > 0 and stock_info['hold_can_use_num'] > 0:
             sell_price = stock_info['bidPrice'][0]
             sell_num = 0
@@ -416,34 +398,34 @@ class Strategy1:
                         break
             # 可卖的太少了，不值当的
             if total_money < self.min_bid_money and sell_num < stock_info['hold_can_use_num']:
-                print(f"{stock_code}, 可卖的太少了{total_money}, sell_num: {sell_num}, limit_price: {limit_price}, hold_can_use_num: {stock_info['hold_can_use_num']}")
+                logger.info(f"{stock_code}, 可卖的太少了{total_money}, sell_num: {sell_num}, limit_price: {limit_price}, hold_can_use_num: {stock_info['hold_can_use_num']}")
                 return
             if sell_num > 0 and sell_price > 0 and stock_info['hold_can_use_num'] > 0:
                 remark = f"卖出日志: {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, 卖出{stock_code}, 指数rate:{index_info['increase_rate']}, premium: {premium}, premium_threshold: {premium_threshold}," \
                          f"估值{appraisal},报价{sell_price},{sell_num}手, 目前买盘{stock_info['bidPrice']},{stock_info['bidVol']}, 指数{index_info}"
                 logger.info(remark)
-                order_id = self.traderService.sync_sell(stock_code, sell_price, sell_num, "折价策略",
+                order_id = self.trader_service.sync_sell(stock_code, sell_price, sell_num, "折价策略",
                                                         self.inner_stock_infos)
-                print(f"卖出orderid: {order_id}")
+                logger.info(f"卖出orderid: {order_id}")
                 if order_id:
                     # 在回调中添加record更准确，因为一笔委托可能会被不同价格多笔成交
                     # strategy_record.add(self.db, order_id, "折价策略", stock_code, sell_price,
                     #                     sell_num * 100, index_info['current'], remark, 200)
-                    order = self.traderService.query_by_order_id(int(order_id))
-                    print(f"卖出结果: {order} {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    order = self.trader_service.query_by_order_id(int(order_id))
+                    logger.info(f"卖出结果: {order} {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
                     # 0.5秒撤单，如果卖成功了就撤单失败无所谓
                     time.sleep(0.5)
-                    self.traderService.cancel(order_id)
+                    self.trader_service.cancel(order_id)
                 # 更新持有信息
                 if fresh_holding:
                     time.sleep(1)
-                    data_loader.fresh_holding(self.inner_stock_infos, self.traderService.get_holding())
-        print(f"sell executed over {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+                    data_loader.fresh_holding(self.inner_stock_infos, self.trader_service.get_holding())
+        logger.info(f"sell executed over {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     def to_cancel(self, sell_stock_code, buy_stock_code):
-        hangings = self.traderService.get_hanging()
+        hangings = self.trader_service.get_hanging()
         for item in hangings:
             if item.stock_code == sell_stock_code or item.stock_code == buy_stock_code:
-                print(f"撤销委托, {sell_stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]},  order_id: {item.order_id}, 撤销结果: {self.traderService.cancel(item.order_id)}")
-                # print(item.order_time)
-                # print(item.order_status)
+                logger.info(f"撤销委托, {sell_stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]},  order_id: {item.order_id}, 撤销结果: {self.trader_service.cancel(item.order_id)}")
+                # logger.info(item.order_time)
+                # logger.info(item.order_status)

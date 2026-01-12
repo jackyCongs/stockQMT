@@ -14,7 +14,7 @@ class AdaptiveTaskProcessor:
         self.logical_cores = 20
 
         # 线程池配置（IO密集型默认100，是逻辑核心的5倍）
-        self.base_workers = self.physical_cores * 22
+        self.base_workers = self.physical_cores * 10
         # 线程池配置：核心线程20（接近逻辑核心数），最大50（避免过多切换）
         self.executor = ThreadPoolExecutor(
             max_workers=self.base_workers,

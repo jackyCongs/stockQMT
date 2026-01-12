@@ -2,23 +2,20 @@
 
 from xtquant.xttrader import XtQuantTrader
 from xtquant import xtconstant
-from service import account, TradeCallback
+from service.trade_callback import TradeCallback
+from service import account
 import time
 import threading
 import logging
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(message)s',
-                    filename='logs/app.log',
-                    filemode='a')
 logger = logging.getLogger(__name__)
 
-
-class Trader_service:
-    def __init__(self, session_id):
-        self.path = account.get_path()
+class TraderService:
+    def __init__(self, session_id, platform):
+        self.platform = platform
+        self.path = account.get_path(self.platform)
         self.session_id = session_id
-        self.account = account.get_account()
+        self.account = account.get_account(self.platform)
         self.xt_trader = self._create_trader()
         self._connect()
         self.locks = {}
@@ -30,14 +27,14 @@ class Trader_service:
 
     def _get_lock(self, stock_code):
         # 如果stock_code对应的锁不存在，则创建一个新的锁
-        if stock_code not in self.locks:
-            self.locks[stock_code] = threading.Lock()
-        return self.locks[stock_code]
+        lock_key = self.platform + "_" + stock_code
+        if lock_key not in self.locks:
+            self.locks[lock_key] = threading.Lock()
+        return self.locks[lock_key]
 
     def _connect(self):
         # 建立交易连接
-        callback = TradeCallback.TradeCallback()
-        self.xt_trader.register_callback(callback)
+        self.xt_trader.register_callback(TradeCallback())
         self.xt_trader.start()
         while True:
             connect_result = self.xt_trader.connect()

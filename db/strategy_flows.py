@@ -1,4 +1,5 @@
 # coding=utf-8
+import pymysql
 from pymysql import Error
 
 ALLOWED_FIELDS = [
@@ -18,7 +19,7 @@ def insert_strategy_flow(connection, data):
     placeholders = ', '.join(['%s'] * len(fields))
     sql = f"INSERT INTO strategy_flows ({columns}) VALUES ({placeholders})"
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             cursor.execute(sql, list(valid_data.values()))
         return cursor.lastrowid
     except Error as e:
@@ -28,7 +29,7 @@ def insert_strategy_flow(connection, data):
 
 def get_incomplete_flow_by_stock_code(connection, stock_code):
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             sql = f"SELECT * FROM strategy_flows WHERE stock_code = %s and `status` = 0 order by id asc limit 1"
             cursor.execute(sql, (stock_code,))
             return cursor.fetchone()
@@ -39,7 +40,7 @@ def get_incomplete_flow_by_stock_code(connection, stock_code):
 
 def get_by_max_flows_sequence(connection):
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             sql = f"SELECT * FROM strategy_flows order by flows_sequence desc limit 1"
             cursor.execute(sql)
             result = cursor.fetchone()
@@ -51,7 +52,7 @@ def get_by_max_flows_sequence(connection):
 
 def get_max_flows_trans_date(connection):
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             sql = f"SELECT max(`trans_date`) as max_flows_date FROM strategy_flows"
             cursor.execute(sql)
             result = cursor.fetchone()
@@ -64,7 +65,7 @@ def get_max_flows_trans_date(connection):
 
 def get_flow_by_trans_sequence(connection, trans_sequence, stock_code):
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             sql = """
                 SELECT * FROM strategy_flows
                 WHERE trans_sequence = %s
@@ -88,7 +89,7 @@ def update_strategy_flow(connection, data, id_value):
     set_clause = ', '.join([f'`{k}` = %s' for k in valid_data])
     sql = f"UPDATE strategy_flows SET {set_clause} WHERE id = %s"
     try:
-        with connection.cursor() as cursor:
+        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
             # 参数顺序：更新字段的值 + ID值
             affected_rows = cursor.execute(sql, list(valid_data.values()) + [id_value])
         return affected_rows

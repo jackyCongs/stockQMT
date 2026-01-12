@@ -1,37 +1,21 @@
 # coding=utf-8
 
-from helper.time_utils import get_time, get_datetime
+from helper.time_utils import get_datetime
 from db import stock as stock_db
-from db import strategy_record
 from datetime import datetime, timedelta
-from decimal import Decimal, getcontext
+from decimal import Decimal
 from helper import spider, utils, date_utils
 import logging
 from tqdm import tqdm
 from xtquant import xtdata
-import math
-import threading
 import json
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(message)s',
-                    filename='logs/app.log',
-                    filemode='a')
 logger = logging.getLogger(__name__)
 
 
-# 数据结构:
-# 【本方法中初始化】code、name、last_net_worth、last_net_worth_date、withdraw_commission_7rate、处理分红除权、target_index
-# 【在监听场内基金里初始化】买卖量价、持有数量、持有天数
-# 【在指数监听中初始化】 target_start, target_increase_rate,
-
-# 【以下是建议操作的策略】
-# 可买的价格 = (target_worth - 分红除权) * (1 + 目标指数的加权涨跌幅) * (1-withdraw_commission_7rate) * (溢价1-0.5) > 比卖价
-# 可卖的价格 = (target_worth - 分红除权) * (1 + 目标指数的涨跌幅) * (1-withdraw_commission_7rate) <= 买价
-def load_inner_stock(db_instance, inner_stock_infos):
-    stocks = stock_db.get_stock_list(db_instance)
-    first_stock_net_worth_date = json.loads(stocks[0]['net_worth'])['net_worth_date'].replace("-", "")
-    trading_dates = xtdata.get_trading_dates("SZ", first_stock_net_worth_date, get_datetime().strftime("%Y%m%d"))
+def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
+    stocks = stock_db.get_stock_list(db_instance, inner_etf_type)
+    trading_dates = xtdata.get_trading_dates("SZ", date_utils.get_past_date_str(15), get_datetime().strftime("%Y%m%d"))
     is_today_trading = date_utils.is_today_trading()
     if is_today_trading:
         worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 2])
@@ -66,7 +50,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
                     logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
                     net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
                 # 存起来净值
-                stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), stock['id'])
+                stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), net_worth['net_worth_date'], stock['id'])
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
@@ -158,8 +142,8 @@ def load_stock(db_instance, stock_codes, stock_infos, holding):
     pbar.close()
 
 
-def get_all_inner_stocks_code(db_instance):
-    stocks = stock_db.get_stock_list(db_instance)
+def get_all_inner_stocks_code(db_instance, inner_etf_type):
+    stocks = stock_db.get_stock_list(db_instance, inner_etf_type)
     codes = []
     for stock in stocks:
         if utils.enhance_stock_code(stock['code']) == stock['code']:

@@ -58,6 +58,20 @@ def get_last_net_worth(code):
     return {'code': code, 'msg': msg, 'net_worth_date': net_worth_date, 'net_worth': net_worth, 'bonus_date': bonus_date,
             'bonus_money': bonus_money}
 
+def get_target_index(code):
+    url = f"https://fund.eastmoney.com/{str(code)}.html"
+    response = build_and_get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    td_tag = soup.find('td', {'class': 'specialData'})
+    print(f"get {code}")
+    raw_text = td_tag.get_text(strip=True)
+    parts = raw_text.split('|')
+    # 提取跟踪标的（冒号后内容）
+    target_index = parts[0].split('：')[1].strip()
+    # 提取年化跟踪误差（冒号后内容）
+    annual_error = parts[1].split('：')[1].strip()
+    # 5. 输出结果
+    return {"target_index": target_index, "annual_error": annual_error}
 
 def build_and_get(url, stream = False):
     USER_AGENT_LIST = [

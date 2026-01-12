@@ -1,12 +1,9 @@
 from xtquant.xttrader import XtQuantTraderCallback
 import logging
 from db import strategy_transaction
-from main import db as dbcon
+from db.db_pool import DBPool
+from datetime import datetime
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(message)s',
-                    filename='logs/app.log',
-                    filemode='a')
 logger = logging.getLogger(__name__)
 
 class TradeCallback(XtQuantTraderCallback):
@@ -46,7 +43,8 @@ class TradeCallback(XtQuantTraderCallback):
         # """)
 
     def on_stock_trade(self, trade):
-        print(f"""
+        logger.info(f"on_stock_trade 成交, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        logger.info(f"""
                 =============================
                         成交信息
                 =============================
@@ -64,9 +62,10 @@ class TradeCallback(XtQuantTraderCallback):
                 策略名称: {trade.strategy_name},
                 委托备注: {trade.order_remark}
                 """)
-        logger.info("on trade callback")
-        logger.info(f"成交变动 {trade.account_id}, {trade.stock_code}, {trade.order_id}")
-        strategy_transaction.add(dbcon, trade)
+        logger.info(f"成交变动, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} {trade.account_id}, {trade.stock_code}, {trade.order_id}")
+        db = DBPool()
+        strategy_transaction.add(db, trade)
+        logger.info(f"on_stock_trade 成交处理完成, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     def on_order_error(self, order_error):
         """
@@ -75,7 +74,7 @@ class TradeCallback(XtQuantTraderCallback):
         :return:
         """
         logger.info("on order_error callback")
-        logger.info(f"委托报错回调 {order_error.order_remark} {order_error.error_msg}")
+        logger.info(f"委托报错回调, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, {order_error.order_remark} {order_error.error_msg}")
 
     def on_cancel_error(self, cancel_error):
         """

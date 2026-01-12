@@ -1,7 +1,6 @@
 # coding=utf-8
 import time
 
-
 def add(db, trade):
     # 连接到数据库
     conn = db.get_connection()
