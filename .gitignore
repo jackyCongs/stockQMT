@@ -2,3 +2,5 @@
 config.ini
 */__pycache__/
 logs/
+__pycache__/
+files/

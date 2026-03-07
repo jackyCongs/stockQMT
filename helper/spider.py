@@ -7,6 +7,8 @@ from decimal import Decimal, ROUND_HALF_UP
 import random
 import json
 from helper import utils
+import time
+from requests.exceptions import RequestException
 
 
 # 获取场外基金最新的净值和净值时间
@@ -56,25 +58,20 @@ def get_last_net_worth(code):
     return {'code': code, 'msg': msg, 'net_worth_date': net_worth_date, 'net_worth': net_worth, 'bonus_date': bonus_date,
             'bonus_money': bonus_money}
 
-
-def get_current_index_info(index_code):
-    derive = utils.get_derive_by_code(index_code)
-    if derive == -1:
-        return None
-
-    url = f"https://1.push2.eastmoney.com/api/qt/stock/sse?fields=f58,f734,f107,f57,f43,f59,f169,f170,f152,f46,f60,f44,f45,f47,f48,f19,f17,f531,f15,f13,f11,f20,f18,f16,f14,f12,f39,f37,f35,f33,f31,f40,f38,f36,f34,f32,f211,f212,f213,f214,f215,f210,f209,f208,f207,f206,f161,f49,f171,f50,f86,f168,f108,f167,f71,f292,f51,f52,f191,f192,f452,f177&secid={str(derive)}.{str(index_code)}"
-    response = build_and_get(url, True)
-    try:
-        for line in response.iter_lines():  # 迭代每一行数据
-            decoded_line = line.decode('utf-8')
-            data = json.loads(decoded_line.replace('data: ', ''))
-            return {'current_index': data['data']['f43'], 'last_close': data['data']['f60']}
-    except requests.exceptions.RequestException as e:
-        print(f"请求失败：{e}")
-        return None
-    finally:
-        response.close()
-
+def get_target_index(code):
+    url = f"https://fund.eastmoney.com/{str(code)}.html"
+    response = build_and_get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    td_tag = soup.find('td', {'class': 'specialData'})
+    print(f"get {code}")
+    raw_text = td_tag.get_text(strip=True)
+    parts = raw_text.split('|')
+    # 提取跟踪标的（冒号后内容）
+    target_index = parts[0].split('：')[1].strip()
+    # 提取年化跟踪误差（冒号后内容）
+    annual_error = parts[1].split('：')[1].strip()
+    # 5. 输出结果
+    return {"target_index": target_index, "annual_error": annual_error}
 
 def build_and_get(url, stream = False):
     USER_AGENT_LIST = [
@@ -84,9 +81,55 @@ def build_and_get(url, stream = False):
     headers = {
         'User-Agent': random.choice(USER_AGENT_LIST)
     }
-    if stream :
-        response = requests.get(url, headers=headers, timeout=10, stream=True)
-    else:
-        response = requests.get(url, headers=headers, timeout=10)
+    response = requests.get(url, headers=headers, timeout=10)
     response.encoding = 'utf-8'
     return response
+
+
+def stream_listener(index_code, cookie, process_func=lambda x, index_code: None):
+    derive = utils.get_derive_by_code(index_code)
+    if derive == -1:
+        return None
+
+    url = f"https://1.push2.eastmoney.com/api/qt/stock/sse?fields=f58,f734,f107,f57,f43,f59,f169,f170,f152,f46,f60,f44,f45,f47,f48,f19,f17,f531,f15,f13,f11,f20,f18,f16,f14,f12,f39,f37,f35,f33,f31,f40,f38,f36,f34,f32,f211,f212,f213,f214,f215,f210,f209,f208,f207,f206,f161,f49,f171,f50,f86,f168,f108,f167,f71,f292,f51,f52,f191,f192,f452,f177&secid={str(derive)}.{str(index_code)}"
+
+    # 构建请求头
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Accept-Language": "en,zh-CN;q=0.9,zh;q=0.8",
+        "Connection": "keep-alive",
+        "Cookie": cookie,
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        "sec-ch-ua": '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"'
+    }
+
+    while True:
+        try:
+            with requests.get(url, headers=headers, timeout=10, stream=True) as resp:
+                if resp.status_code != 200:
+                    print(f"状态码异常: {resp.status_code}，可能Cookie过期")
+                    time.sleep(5)
+                    continue
+
+                print(f"连接成功，[{index_code}], 开始监听... ")
+                for line in resp.iter_lines(decode_unicode=True):
+                    if line:
+                        process_func(line, index_code)
+
+        except RequestException as e:
+            print(f"连接错误: {e}，5秒后重试")
+            time.sleep(5)
+        except KeyboardInterrupt:
+            print("\n用户终止监听")
+            break
+        except Exception as e:
+            print(f"处理错误: {e}，继续监听")
+

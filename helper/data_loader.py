@@ -1,44 +1,42 @@
 # coding=utf-8
 import time
 
+from helper.time_utils import get_datetime
 from db import stock as stock_db
-from db import strategy_record
 from datetime import datetime, timedelta
-from decimal import Decimal, getcontext
+from decimal import Decimal
 from helper import spider, utils, date_utils
 import logging
 from tqdm import tqdm
 from xtquant import xtdata
-import math
-import threading
 import json
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(message)s',
-                    filename='logs/app.log',
-                    filemode='a')
 logger = logging.getLogger(__name__)
 
 
-# 数据结构:
-# 【本方法中初始化】code、name、last_net_worth、last_net_worth_date、withdraw_commission_7rate、处理分红除权、target_index
-# 【在监听场内基金里初始化】买卖量价、持有数量、持有天数
-# 【在指数监听中初始化】 target_start, target_increase_rate,
+def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
+    stocks = stock_db.get_stock_list(db_instance, inner_etf_type)
+    trading_dates = xtdata.get_trading_dates("SZ", date_utils.get_past_date_str(15), get_datetime().strftime("%Y%m%d"))
+    is_today_trading = date_utils.is_today_trading()
+    if is_today_trading:
+        worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 2])
+    else:
+        worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 1])
+    print(f"上一日交易、净值日期为: {worth_date}, 今天是否是交易日：{is_today_trading}, 请输入 'yes' 继续或 'no' 退出: ")
+    while True:
+        user_input = input().strip().lower()
+        if user_input == 'yes':
+            print("用户确认，继续执行...")
+            break
+        elif user_input == 'no':
+            print("用户取消，程序退出")
+            exit(0)
+        else:
+            print("输入无效，请重新输入 'yes' 或 'no'")
 
-# 【以下是建议操作的策略】
-# 可买的价格 = (target_worth - 分红除权) * (1 + 目标指数的加权涨跌幅) * (1-withdraw_commission_7rate) * (溢价1-0.5) > 比卖价
-# 可卖的价格 = (target_worth - 分红除权) * (1 + 目标指数的涨跌幅) * (1-withdraw_commission_7rate) <= 买价
-def load_inner_stock(db_instance, inner_stock_infos):
-    stocks = stock_db.get_stock_list(db_instance)
     pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
-    first_stock_net_worth_date = json.loads(stocks[0]['net_worth'])['net_worth_date'].replace("-", "")
-    trading_dates = xtdata.get_trading_dates("SZ", first_stock_net_worth_date, datetime.now().strftime("%Y%m%d"))
     for stock in stocks:
         try:
-            if date_utils.is_today_trading():
-                worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 2])
-            else:
-                worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 1])
             net_worth = None
             if stock['net_worth']:
                 net_worth = json.loads(stock['net_worth'])
@@ -48,12 +46,12 @@ def load_inner_stock(db_instance, inner_stock_infos):
                 if net_worth['code'] != 200:
                     logger.error(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
                     continue
-                if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == datetime.now().strftime("%Y-%m-%d") \
-                        and net_worth['bonus_date'] != net_worth['bonus_date']:
-                    logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
-                    net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
                 # 存起来净值
-                stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), stock['id'])
+                stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), net_worth['net_worth_date'], stock['id'])
+
+            if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d"):
+                logger.warning(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
+                net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
@@ -87,7 +85,7 @@ def load_inner_stock(db_instance, inner_stock_infos):
 def fresh_holding(inner_stock_infos, holding):
     # 将holding转换为字典以便快速查询，键为股票代码
     holding_dict = {hold.stock_code: hold for hold in holding}
-    print(f"start fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"start fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     # 遍历所有股票信息，更新持仓状态和数量
     for stock_code, info in inner_stock_infos.items():
@@ -100,7 +98,7 @@ def fresh_holding(inner_stock_infos, holding):
                 'hold_num': round(hold.volume / 100),
                 'hold_status': 1 # [0没持有， 2买入中， 1持有中]
             })
-            print(f"stock_code:{stock_code}, can_use_volume:{round(hold.can_use_volume / 100)}")
+            # print(f"stock_code:{stock_code}, can_use_volume:{round(hold.can_use_volume / 100)}")
         else:
             # 未持有该股票，重置为0
             info.update({
@@ -108,8 +106,16 @@ def fresh_holding(inner_stock_infos, holding):
                 'hold_status': 0,
                 'hold_can_use_num': 0
             })
-    print(f"done fresh holding {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"done fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
+def interval_fresh_holding(inner_stock_infos, trader_service, second=15):
+    while True:
+        try:
+            current_holding = trader_service.get_holding()
+            fresh_holding(inner_stock_infos, current_holding)
+            time.sleep(second)
+        except Exception as e:
+            print(f"interval_fresh_holding 处理错误: {e}")
 
 def load_stock(db_instance, stock_codes, stock_infos, holding):
     # 持仓列表
@@ -145,8 +151,8 @@ def load_stock(db_instance, stock_codes, stock_infos, holding):
     pbar.close()
 
 
-def get_all_inner_stocks_code(db_instance):
-    stocks = stock_db.get_stock_list(db_instance)
+def get_all_inner_stocks_code(db_instance, inner_etf_type):
+    stocks = stock_db.get_stock_list(db_instance, inner_etf_type)
     codes = []
     for stock in stocks:
         if utils.enhance_stock_code(stock['code']) == stock['code']:
@@ -172,9 +178,7 @@ def get_all_target_index_code(inner_stock_infos):
 
 def load_target_index(inner_stock_infos, target_index_infos):
     pbar = tqdm(total=len(inner_stock_infos), desc="index loading...", mininterval=0.1)
-    relation = []
     for code in inner_stock_infos:
-        relation = []
         if inner_stock_infos[code]['target_index'] not in target_index_infos:
             relation = [code]
         else:
@@ -200,7 +204,7 @@ def get_rest_index(target_index_infos):
 
 
 def get_previous_date():
-    today = datetime.now()
+    today = get_datetime()
     end_time = today.strftime('%Y%m%d')
     # 计算15天前的日期
     fifteen_days_ago = today - timedelta(days=15)
@@ -215,7 +219,7 @@ def get_previous_date():
 
 
 def get_premium(increase_rate, base_premium_threshold):
-    increase_rate_pct = increase_rate * Decimal(100)
+    increase_rate_pct = Decimal(increase_rate) * Decimal(100)
     base = Decimal(base_premium_threshold)
     if increase_rate_pct <= 0:
         return base
@@ -226,7 +230,7 @@ def get_premium(increase_rate, base_premium_threshold):
 
 
 def get_sell_premium(increase_rate):
-    increase_rate = increase_rate * Decimal(100)
+    increase_rate = Decimal(increase_rate) * Decimal(100)
     if increase_rate >= 0:
         return Decimal(0)
     abs_rate = abs(increase_rate)
