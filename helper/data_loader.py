@@ -1,4 +1,5 @@
 # coding=utf-8
+import time
 
 from helper.time_utils import get_datetime
 from db import stock as stock_db
@@ -45,12 +46,12 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
                 if net_worth['code'] != 200:
                     logger.error(f"{stock['code']}, 获取基金净值信息失败: {net_worth['msg']}")
                     continue
-                if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d") \
-                        and net_worth['bonus_date'] != net_worth['bonus_date']:
-                    logger.info(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
-                    net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
                 # 存起来净值
                 stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), net_worth['net_worth_date'], stock['id'])
+
+            if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d"):
+                logger.warning(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
+                net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
@@ -107,6 +108,14 @@ def fresh_holding(inner_stock_infos, holding):
             })
     print(f"done fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
+def interval_fresh_holding(inner_stock_infos, trader_service, second=15):
+    while True:
+        try:
+            current_holding = trader_service.get_holding()
+            fresh_holding(inner_stock_infos, current_holding)
+            time.sleep(second)
+        except Exception as e:
+            print(f"interval_fresh_holding 处理错误: {e}")
 
 def load_stock(db_instance, stock_codes, stock_infos, holding):
     # 持仓列表
@@ -169,9 +178,7 @@ def get_all_target_index_code(inner_stock_infos):
 
 def load_target_index(inner_stock_infos, target_index_infos):
     pbar = tqdm(total=len(inner_stock_infos), desc="index loading...", mininterval=0.1)
-    relation = []
     for code in inner_stock_infos:
-        relation = []
         if inner_stock_infos[code]['target_index'] not in target_index_infos:
             relation = [code]
         else:
@@ -212,7 +219,7 @@ def get_previous_date():
 
 
 def get_premium(increase_rate, base_premium_threshold):
-    increase_rate_pct = increase_rate * Decimal(100)
+    increase_rate_pct = Decimal(increase_rate) * Decimal(100)
     base = Decimal(base_premium_threshold)
     if increase_rate_pct <= 0:
         return base
@@ -223,7 +230,7 @@ def get_premium(increase_rate, base_premium_threshold):
 
 
 def get_sell_premium(increase_rate):
-    increase_rate = increase_rate * Decimal(100)
+    increase_rate = Decimal(increase_rate) * Decimal(100)
     if increase_rate >= 0:
         return Decimal(0)
     abs_rate = abs(increase_rate)

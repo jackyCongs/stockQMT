@@ -6,7 +6,7 @@ def get_stock_list(db, inner_etf_type):
     cursor = conn.cursor()
     row_dict_list = []
     try:
-        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = %s and target_worth_url != ''"
+        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = %s and target_worth_url != '' and status = 1"
         cursor.execute(query, (str(inner_etf_type),))
         rows = cursor.fetchall()
         column_names = [description[0] for description in cursor.description]
@@ -15,6 +15,38 @@ def get_stock_list(db, inner_etf_type):
         return row_dict_list
     except Exception as e:
         print(e)
+        return None
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_stock_batch(db, last_id=0, limit=500):
+    """
+    通过锚点 ID 分批获取股票数据
+    """
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    row_dict_list = []
+    try:
+        # 核心逻辑：使用 ID 过滤并排序，配合 LIMIT 控制步长
+        query = """
+            SELECT * FROM stock 
+            WHERE id > %s and source = 'A'
+            ORDER BY id ASC 
+            LIMIT %s
+        """
+        cursor.execute(query, (last_id, limit))
+        rows = cursor.fetchall()
+
+        # 获取列名并转为字典格式
+        column_names = [description[0] for description in cursor.description]
+        for row in rows:
+            row_dict_list.append(dict(zip(column_names, row)))
+
+        return row_dict_list
+    except Exception as e:
+        print(f"查询出错: {e}")
         return None
     finally:
         cursor.close()

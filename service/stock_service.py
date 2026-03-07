@@ -25,9 +25,32 @@ logger = logging.getLogger(__name__)
 class StockService:
     def __init__(self, db):
         self.format_codes = []
-        self.stock_codes = read_lines_to_array("./files/prepared_update_stock_codes.txt")
-        self.format_code()
+        self.stock_codes = [] #read_lines_to_array("./files/prepared_update_stock_codes.txt")
         self.db = db
+
+    def load_all_stock_codes(self):
+        last_id = 0  # 初始锚点
+        batch_size = 500
+        total_processed = 0
+        while True:
+            # 1. 获取当前批次
+            stocks = stock.get_stock_batch(self.db, last_id, batch_size)
+            # 异常处理：如果返回 None 说明数据库连接或查询报错
+            if stocks is None:
+                print("查询过程中出现错误，终止处理。")
+                break
+            # 2. 检查是否还有数据：如果结果集为空，说明已经查完了
+            if not stocks:
+                print("所有数据处理完毕。")
+                break
+            # 3. 处理当前批次的数据
+            for detail in stocks:
+                self.stock_codes.append(detail['code'])
+            last_id = stocks[-1]['id']
+            total_processed += len(stocks)
+            print(f"已加载 {total_processed} 条数据，当前 ID 锚点: {last_id}")
+
+        print(f"最终共加载 {total_processed} 条记录。")
 
     def format_code(self):
         for code in self.stock_codes:
@@ -36,6 +59,8 @@ class StockService:
             self.format_codes.append(utils.enhance_stock_code(code))
 
     def update_stock_price(self):
+        self.load_all_stock_codes()
+        self.format_code()
         batch_size = 50
         for i in range(0, len(self.format_codes), batch_size):
             batch_codes = self.format_codes[i: i + batch_size]

@@ -44,7 +44,7 @@ class DBPool:
 
     def __db_config(self):
         config = configparser.ConfigParser()
-        config.read('config.ini')
+        config.read('config.ini', encoding='utf-8')
 
         db_config = {
             "host": config["DATABASE"]["host"],

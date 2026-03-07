@@ -3,6 +3,7 @@ import logging
 from db import strategy_transaction
 from db.db_pool import DBPool
 from datetime import datetime
+from service import account
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +45,14 @@ class TradeCallback(XtQuantTraderCallback):
 
     def on_stock_trade(self, trade):
         logger.info(f"on_stock_trade 成交, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        platform_name = account.get_platform_name_by_account_id(trade.account_id)
+        if platform_name is None:
+            logger.error(f"platform_name 获取失败: {trade.account_id}")
         logger.info(f"""
                 =============================
                         成交信息
                 =============================
+                券商平台: {platform_name},
                 账号类型: {trade.account_type},
                 资金账号: {trade.account_id},
                 证券代码: {trade.stock_code},
@@ -64,7 +69,7 @@ class TradeCallback(XtQuantTraderCallback):
                 """)
         logger.info(f"成交变动, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} {trade.account_id}, {trade.stock_code}, {trade.order_id}")
         db = DBPool()
-        strategy_transaction.add(db, trade)
+        strategy_transaction.add(db, trade, platform_name)
         logger.info(f"on_stock_trade 成交处理完成, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     def on_order_error(self, order_error):

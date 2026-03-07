@@ -20,6 +20,8 @@ MARKET_TIMES = {
 
 def enhance_stock_code(code, type='stock', ignore_warning = False):
     if type == 'index':
+        if code.startswith('H'):
+            return f"{code}.SH"
         if code.startswith('000'):
             return f"{code}.SH"
         if code.startswith('399'):
@@ -36,7 +38,7 @@ def enhance_stock_code(code, type='stock', ignore_warning = False):
     elif len(code) == 6 and (code.startswith('0') or code.startswith('3') or code.startswith('158')
                              or code.startswith('159') or code.startswith('16')):
         return f"{code}.SZ"
-    logger.info(f"当前 code: {code}-{type}, 无对应来源")
+    logger.warning(f"当前 code: {code}-{type}, 无对应来源")
     return code
 
 def is_target_index(code):
@@ -45,6 +47,8 @@ def is_target_index(code):
 def get_derive_by_code(code, type = 'index'):
     if type != 'index':
         return -1
+    if code.startswith('H'):
+        return 1
     if code.startswith('000'):
         return 1
     if code.startswith("9"):
@@ -82,6 +86,8 @@ def is_market_closing():
 
 def is_market_after_buffer():
     now = get_datetime()
+    if now.weekday() >= 5:
+        return False
     return (MARKET_TIMES['buffer_morning_open'] <= now.time() <= MARKET_TIMES['morning_close']) or (MARKET_TIMES['buffer_afternoon_open'] <= now.time() <= MARKET_TIMES['afternoon_close'])
 
 def is_going_to_close():

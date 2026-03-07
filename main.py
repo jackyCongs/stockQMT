@@ -11,6 +11,7 @@ from service.trans_flows import TransFlows
 from strategies.strategy1 import Strategy1
 from strategies.strategy2 import Strategy2
 from helper.time_utils import get_time
+from helper import log_utils
 
 log_format = '%(asctime)s | %(levelname)s | %(name)s.%(funcName)s:%(lineno)d | %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format, filename='logs/app.log', encoding='utf-8', filemode='a') #, force=True
@@ -34,10 +35,11 @@ if __name__ == '__main__':
     # param：-mode
     parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data")
     # param：-platform
-    parser.add_argument("-platform", type=str, choices=["大同", "湘财"], help="Target trading platform: 大同, 湘财")
+    parser.add_argument("-platform", type=str, choices=["大同证券", "湘财证券"], help="Target trading platform: 大同证券, 湘财证券")
     # param: -strategy
     parser.add_argument("-s", type=str, choices=["s1", "s2"], help="Strategy ID to execute (e.g., s1, s2)")
     args = parser.parse_args()
+    logger = log_utils.init_logging(args.s, args.mode)
     if args.mode in ["0", "1"] and not args.platform:
         parser.error("The -platform argument is required when -mode is 0 or 1.")
     if args.mode in ["0"] and not args.s:
@@ -51,7 +53,7 @@ if __name__ == '__main__':
                 parser.error(f"Undefined strategy ID: {args.mode}")
             logger.info(f"Starting strategy: {args.s}")
             strategy_class = strategy_map[args.s]
-            strategy_class(db, trader_service).run()
+            strategy_class(db, trader_service, args.platform).run()
             trader_service.xt_trader.run_forever()
         # mode 1: accounting
         elif args.mode == '1':
