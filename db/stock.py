@@ -53,6 +53,48 @@ def get_stock_batch(db, last_id=0, limit=500):
         conn.close()
 
 
+def get_unique_index_codes(db):
+    """
+    查询所有需要追踪的、去重的目标指数代码 (target_worth_url)
+    条件：status=1 (正常), is_etf=1 (是ETF), 且 target_worth_url 非空
+
+    :param db: 数据库连接管理对象 (假设包含 get_connection 方法)
+    :return: list[str], 包含所有去重后的指数代码列表。如果出错返回 None。
+    """
+    conn = db.get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # 核心逻辑：使用 DISTINCT 去重，并加上 IS NOT NULL 和 != '' 过滤空值
+        query = """
+            SELECT DISTINCT target_worth_url 
+            FROM stock 
+            WHERE status = 1 
+              AND is_etf = 1 
+              AND target_worth_url IS NOT NULL 
+              AND target_worth_url != ''
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+
+        # rows 是一个包含 tuple 的 list，例如: [('931151',), ('399006',), ('399673',)]
+        # 我们通过列表推导式，将其扁平化为一个纯字符串列表
+        index_codes = [row[0] for row in rows]
+
+        # 记录日志 (可选)
+        print(f"成功获取需要追踪的指数代码，共 {len(index_codes)} 个去重标的。")
+
+        return index_codes
+
+    except Exception as e:
+        print(f"查询指数代码出错: {e}")
+        return None
+    finally:
+        # 确保游标和连接被正确关闭
+        cursor.close()
+        conn.close()
+
+
 def get_stock_by_code(db, code):
     conn = db.get_connection()
     cursor = conn.cursor()

@@ -1,11 +1,14 @@
 # coding=utf-8
 
 import pymysql
-from db import strategy_flows
+from db import strategy_flows, fund
 from db.db_pool import DBPool
 import math
 import pandas as pd
 import configparser
+from decimal import Decimal, ROUND_HALF_UP
+
+from helper import date_utils
 
 
 def load_config():
@@ -15,16 +18,31 @@ def load_config():
         exit("文件名存在异常")
     return config
 
+
 class TransFlows:
     def __init__(self, asset, platform):
-        db = DBPool()
+        self.last_update_date = None
+        self.db = DBPool()
         self.asset = asset
-        self.available_balance = 0
+        self.available_balance = Decimal('0.0')
         self.platform = platform
-        self.connection = db.get_connection()
+        self.connection = self.db.get_connection()
         # 关闭自动提交，开启以天为单位的事务，要么全部成功要么全部失败
         self.connection.autocommit(False)
         self.config = load_config()
+        self.reversed_purchase_balance = Decimal('0.0')
+
+    def _to_decimal(self, value):
+        """安全地将各种类型转换为 Decimal"""
+        if pd.isna(value) or value == '':
+            return Decimal('0.0')
+        return Decimal(str(value))
+
+    def _round_money(self, value):
+        """执行标准的四舍五入，保留两位小数"""
+        if not isinstance(value, Decimal):
+            value = self._to_decimal(value)
+        return value.quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
 
     def get_file(self):
         if self.platform is None:
@@ -36,46 +54,57 @@ class TransFlows:
         exit("platform未知，无法获取到对账文件")
 
     def check_result(self):
-        if self.available_balance != self.asset.cash:
-            exit(f"对账不通过，账本余额和实际余额不一致: accounting: {self.available_balance}, cash: {self.asset.cash}")
-        print(f"对账通过: 当前可用余额: {self.available_balance}")
+        cash_dec = self._to_decimal(self.asset.cash)
+        if self.reversed_purchase_balance > Decimal('0'):
+            interest = cash_dec - self.available_balance - self.reversed_purchase_balance
+            if (interest / self.reversed_purchase_balance * Decimal('100')) < Decimal('0.5') and cash_dec == (
+                    self.available_balance + self.reversed_purchase_balance + interest):
+                # 有效利息
+                fund.insert_record(self.db, 2, float(self._round_money(interest)), self.platform,
+                                   date_utils.format_date_fast(self.last_update_date), "逆回购利息", False)
+                print(f"逆回购利息计算成功, 利息: {float(interest)}")
+            else:
+                print(
+                    f"cash: {self.asset.cash}, available_balance: {float(self.available_balance)}, total: {float(self.available_balance + self.reversed_purchase_balance + interest)}")
+                exit(
+                    f"逆回购利息计算异常: 利息{float(interest)}元，买入逆回购金额: {float(self.reversed_purchase_balance)}")
+        else:
+            if self.available_balance != cash_dec:
+                exit(
+                    f"对账不通过，账本余额和实际余额不一致: accounting: {float(self.available_balance)}, cash: {self.asset.cash}")
+        print(f"对账通过: 当前可用余额: {float(self.available_balance)}")
 
     def run(self):
         last_flows = strategy_flows.get_by_max_flows_sequence_by_platform(self.connection, self.platform)
         last_trans_date = strategy_flows.get_max_flows_trans_date(self.connection, self.platform)
         if last_flows is None or last_trans_date is None:
             exit("初始化错误!")
-
-        self.available_balance = float(last_flows['remained_amount'])
-        last_update_date = int(last_trans_date)
+        self.available_balance = self._to_decimal(last_flows['remained_amount'])
+        self.last_update_date = int(last_trans_date)
         df = pd.read_excel(self.get_file(), engine='openpyxl')
         if self.platform == "湘财证券":
             df = df.iloc[::-1].reset_index(drop=True)
         current_process_date = 0
-
         try:
             for i, (index, row) in enumerate(df.iterrows(), start=1):
                 if self.platform == "湘财证券":
                     self.format_xiangcai_to_standard(row)
                 # 过滤掉已经更新过的日期的数据
-                if row['日期'] <= last_update_date:
+                if row['日期'] <= self.last_update_date:
                     continue
-
                 if row['日期'] != current_process_date:
                     if current_process_date != 0:
                         self.connection.commit()
-
                     current_process_date = row['日期']
 
                 last_flows = strategy_flows.get_by_max_flows_sequence(self.connection)
                 next_sequence = last_flows['flows_sequence'] + 1
 
-                # print(f"第{i}行: 证券代码={row['证券代码']}, 买卖={row['买卖']},操作={row['操作']}, 成交数量={row['成交数量']}, 成交价格={row['成交价格']}, 成交金额={row['成交金额']}, 资金余额={row['资金余额']}, 成交序号={row['成交序号']}, 证券名称={row['证券名称']}, 成交数量={row['成交数量']}, 手续费={row['手续费']}, 日期={row['日期']}, 成交时间={row['成交时间']}, 市场类型={row['市场类型']}")
                 hour = 9
                 if len(str(row['成交时间'])) == 6:
                     hour = int(str(row['成交时间'])[:2])
                 # 赎回交易
-                if hour >= 16:
+                if 16 <= hour < 18:
                     # 要识别是开始赎回，还是赎回到账
                     if row['成交金额'] == 0:
                         # 开始赎回
@@ -89,9 +118,12 @@ class TransFlows:
                             print(f"成交序号: {row['成交序号']} 已经存在，处理忽略")
                             continue
                         strategy_flows.insert_strategy_flow(self.connection,
-                                             {"stock_code": row['证券代码'], "stock_name": row['证券名称'], "type": "开放基金赎回",
-                                              "num": -math.fabs(row['成交数量']), "trans_date": row['日期'],
-                                              "trans_sequence": row['成交序号'], "status": 0, "platform": self.platform})
+                                                            {"stock_code": row['证券代码'],
+                                                             "stock_name": row['证券名称'], "type": "开放基金赎回",
+                                                             "num": -math.fabs(row['成交数量']),
+                                                             "trans_date": row['日期'],
+                                                             "trans_sequence": row['成交序号'], "status": 0,
+                                                             "platform": self.platform})
                     else:
                         # 赎回到账
                         # trans_sequence 如果已经存在了就忽略
@@ -99,22 +131,45 @@ class TransFlows:
                         if trans_sequence_flow and trans_sequence_flow['status'] == 1:
                             exit(f"成交序号: {row['成交序号']} 已经存在，需要人工介入查看")
                         incomplete_flow = strategy_flows.get_incomplete_flow_by_stock_code(self.connection, row['成交序号'], row['证券代码'], self.platform)
-                        other_fee = self.check_redemption(incomplete_flow, row)
-                        changed_amount = round(row['成交金额'] - other_fee, 2)
+                        other_fee_dec = self.check_redemption(incomplete_flow, row)
+                        changed_amount = self._round_money(self._to_decimal(row['成交金额']) - other_fee_dec)
                         strategy_flows.update_strategy_flow(self.connection,
-                                             {"price": row['成交价格'], "commission": 0, "other_fee": other_fee,
-                                              "amount_changed": changed_amount,
-                                              "remained_amount": row['资金余额'], "flows_sequence": next_sequence,
-                                              "trans_sequence": row['成交序号'], "status": 1}, incomplete_flow['id'])
+                                                            {"price": row['成交价格'], "commission": 0,
+                                                             "other_fee": float(other_fee_dec),
+                                                             "amount_changed": float(changed_amount),
+                                                             "remained_amount": row['资金余额'],
+                                                             "flows_sequence": next_sequence,
+                                                             "trans_sequence": row['成交序号'], "status": 1},
+                                                            incomplete_flow['id'])
                 else:
+                    # 过滤逆回购
+                    if str(row['证券代码']) in ["131810", "204001"]:
+                        trans_amount_dec = self._to_decimal(row['成交金额'])
+                        commission_dec = self._to_decimal(row['手续费'])
+
+                        if row['成交数量'] < 0:
+                            self.available_balance = self._round_money(self.available_balance + trans_amount_dec)
+                            print(float(self.available_balance))
+                            continue
+                        print("过滤逆回购")
+                        self.available_balance = self._round_money(
+                            self.available_balance - trans_amount_dec - commission_dec)
+                        self.reversed_purchase_balance = self.reversed_purchase_balance + trans_amount_dec
+                        print(float(self.available_balance))
+                        continue
                     # 正常交易
                     self.check_common_transaction(row['成交数量'], row['成交价格'], row['手续费'], row['成交金额'], row['资金余额'])
 
-                    insert_date = {"stock_code": row['证券代码'], "stock_name": row['证券名称'], "type": '证券' + row['操作'],
+                    num_dec = self._to_decimal(row['成交数量'])
+                    price_dec = self._to_decimal(row['成交价格'])
+                    commission_dec = self._to_decimal(row['手续费'])
+                    amount_changed = -self._round_money(self._round_money(num_dec * price_dec) + commission_dec)
+                    insert_date = {"stock_code": row['证券代码'], "stock_name": row['证券名称'],
+                                   "type": '证券' + row['操作'],
                                    "num": row['成交数量'],
                                    "price": row['成交价格'],
                                    "commission": row['手续费'], "other_fee": 0,
-                                   "amount_changed": -round(round(row['成交数量'] * row['成交价格'], 2) + row['手续费'], 2),
+                                   "amount_changed": float(amount_changed),
                                    "remained_amount": row['资金余额'], "trans_date": row['日期'],
                                    "platform": self.platform,
                                    "flows_sequence": next_sequence, "trans_sequence": row['成交序号'], "status": 1}
@@ -131,39 +186,63 @@ class TransFlows:
             self.connection.close()
 
     def check_common_transaction(self, num, price, commission, trans_amount, remain_amount):
-        print(f"available_balance: {self.available_balance}")
-        if math.fabs(round(num * price, 2)) != trans_amount:
-            print(f"{round(num * price, 2)}, {trans_amount}")
+        num_dec = self._to_decimal(num)
+        price_dec = self._to_decimal(price)
+        commission_dec = self._to_decimal(commission)
+        trans_amount_dec = self._to_decimal(trans_amount)
+        remain_amount_dec = self._to_decimal(remain_amount)
+
+        # 严格遵守原逻辑：保留原始的正负号
+        calculated_trans = self._round_money(num_dec * price_dec)
+
+        # 原逻辑：只在比对“成交金额”时使用绝对值判断
+        if abs(calculated_trans) != trans_amount_dec:
+            print(f"计算成交金额: {float(calculated_trans)}, 实际成交金额: {float(trans_amount_dec)}")
             exit("交易金额校验不通过")
-        changed_amount = round(round(num * price, 2) + commission, 2)
-        expected_remain_amount = round(self.available_balance - changed_amount, 2)
-        if expected_remain_amount != remain_amount:
-            print(f"{changed_amount}, {round(self.available_balance - changed_amount, 2)}, {remain_amount}")
+
+        # 修正：去掉了之前擅自加的 abs()，原汁原味还原 round(round(num * price, 2) + commission, 2)
+        changed_amount = self._round_money(calculated_trans + commission_dec)
+        expected_remain_amount = self._round_money(self.available_balance - changed_amount)
+
+        if expected_remain_amount != remain_amount_dec:
+            print(
+                f"变动金额: {float(changed_amount)}, 预期余额: {float(expected_remain_amount)}, 实际余额: {float(remain_amount_dec)}")
             exit("交易后余额校验不通过")
         else:
             # 更新新的余额
-            self.available_balance = round(self.available_balance - changed_amount, 2)
-
+            self.available_balance = expected_remain_amount
+        print(f"available_balance: {float(self.available_balance)}")
 
     def check_redemption(self, incomplete_flow, row):
         if incomplete_flow is None:
             print(row)
             exit("出错了, incomplete_flow 不存在")
-        num = int(row['成交金额'] / row['成交价格'])
+
+        trans_amount_dec = self._to_decimal(row['成交金额'])
+        price_dec = self._to_decimal(row['成交价格'])
+        remain_amount_dec = self._to_decimal(row['资金余额'])
+
+        num = int(trans_amount_dec / price_dec) if price_dec != Decimal('0') else 0
         if math.fabs(math.fabs(incomplete_flow['num']) - math.fabs(num)) > 5:
             print(row)
             print(incomplete_flow)
             exit("出错了，误差略大")
-        other_fee = round(round(self.available_balance + row['成交金额'], 2) - row['资金余额'], 2)
-        if math.fabs(other_fee / row['成交金额'] * 100) > 1: # and int(row['成交序号']) != 6000049012:
+
+        other_fee = self._round_money(self._round_money(self.available_balance + trans_amount_dec) - remain_amount_dec)
+
+        if trans_amount_dec != Decimal('0') and abs(other_fee / trans_amount_dec * Decimal('100')) > Decimal('1'):
             print(row)
             print(incomplete_flow)
-            exit(f"other_fee过大: {other_fee}, 占比: {math.fabs(other_fee / row['成交金额'] * 100)}%，需要人工介入核实")
-        if other_fee < 0:
+            exit(
+                f"other_fee过大: {float(other_fee)}, 占比: {float(abs(other_fee / trans_amount_dec * Decimal('100')))}%，需要人工介入核实")
+        if other_fee < Decimal('0'):
             print(row)
             print(incomplete_flow)
-            exit(f"other_fee异常: {other_fee}, 占比: {math.fabs(other_fee / row['成交金额'] * 100)}%，需要人工介入核实")
-        self.check_common_transaction(incomplete_flow['num'], row['成交价格'], other_fee, row['成交金额'], row['资金余额'])
+            exit(
+                f"other_fee异常: {float(other_fee)}, 占比: {float(abs(other_fee / trans_amount_dec * Decimal('100')) if trans_amount_dec != Decimal('0') else 0)}%，需要人工介入核实")
+
+        self.check_common_transaction(incomplete_flow['num'], row['成交价格'], float(other_fee), row['成交金额'],
+                                      row['资金余额'])
         return other_fee
 
     def format_xiangcai_to_standard(self, row):

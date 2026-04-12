@@ -4,7 +4,7 @@ import logging
 from datetime import time as d_time
 from helper.time_utils import get_time, get_datetime
 
-last_print_time = get_time()
+last_print_times = {}
 logger = logging.getLogger(__name__)
 
 MARKET_TIMES = {
@@ -15,6 +15,7 @@ MARKET_TIMES = {
     "buffer_morning_open": d_time(9, 35),
     "buffer_afternoon_open": d_time(13, 1),
     "gonna_close": d_time(14, 52),
+    "call_auction": d_time(14, 57),
 }
 
 
@@ -27,7 +28,7 @@ def enhance_stock_code(code, type='stock', ignore_warning = False):
         if code.startswith('399'):
             return f"{code}.SZ"
         if code.startswith("9"):
-            return code
+            return f"{code}.SH"
         if not ignore_warning:
             logger.warning(f"当前 code: {code}-{type}, 无对应来源")
         return code
@@ -63,11 +64,11 @@ def purified_code(code):
     return code.split('.')[0]
 
 
-def should_print(gap):
+def should_print(task_name, gap):
     current_time = get_time()
-    global last_print_time
-    if current_time - last_print_time >= gap:
-        last_print_time = current_time
+    last_time = last_print_times.get(task_name, 0)
+    if current_time - last_time >= gap:
+        last_print_times[task_name] = current_time
         return True
     return False
 
@@ -89,6 +90,13 @@ def is_market_after_buffer():
     if now.weekday() >= 5:
         return False
     return (MARKET_TIMES['buffer_morning_open'] <= now.time() <= MARKET_TIMES['morning_close']) or (MARKET_TIMES['buffer_afternoon_open'] <= now.time() <= MARKET_TIMES['afternoon_close'])
+
+def is_normal_trading_hours():
+    now = get_datetime()
+    if now.weekday() >= 5:
+        return False
+    return (MARKET_TIMES['buffer_morning_open'] <= now.time() <= MARKET_TIMES['morning_close']) or (MARKET_TIMES['buffer_afternoon_open'] <= now.time() <= MARKET_TIMES['call_auction'])
+
 
 def is_going_to_close():
     now = get_datetime()
