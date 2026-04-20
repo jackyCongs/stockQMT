@@ -29,7 +29,7 @@ class Strategy2:
         # 等待被初始化的全局指数
         self.target_index_infos = {}
         # 单个股票最大可以持仓多少钱
-        self.max_single_amount = 1100
+        self.max_single_amount = 2200
         # 每次出价最低多少钱
         self.min_bid_amount = 100
 

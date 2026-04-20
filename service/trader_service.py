@@ -164,7 +164,7 @@ class TraderStrategyService:
                 holding_money = round(stock_info['hold_num'] * 100 * stock_info['askPrice'][0], 2)
                 max_able_bid_money = self.max_bid_money - holding_money
                 # 计算当前指数共持仓多少钱，
-                index_unused_money_capacity = self.max_bid_money * 2.5 - index_info['index_total_market_value']
+                index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
                 logger.info(f"该指数共持仓已达: {index_info['index_total_market_value']}元，还有{index_unused_money_capacity}元额度可买")
                 if index_unused_money_capacity < max_able_bid_money:
                     max_able_bid_money = index_unused_money_capacity
@@ -211,7 +211,7 @@ class TraderStrategyService:
                     self.processor.submit_task(self.order_buy_thread, stock_code, bid_price, bid_num, stock_info, hold_num, inner_stock_infos, target_index_infos, fresh_holding)
                     logger.info(f"inner_stock_info: {stock_info}")
                     logger.info(f"target_index_info: {index_info}")
-                    logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate']) * 0.9), 4)}")
+                    logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate']) * 0.95), 4)}")
                     return
         finally:
             logger.info(f"release lock {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")

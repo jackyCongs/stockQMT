@@ -255,8 +255,6 @@ def get_overheating_penalty(increase_rate):
 
 
 def run_granular_tests():
-    base_threshold = 0.25
-
     print("=" * 55)
     print(f"{'今日指数涨幅':<15} | {'要求最低折价率':<18} | {'状态备注'}")
     print("-" * 55)
