@@ -3,6 +3,8 @@ import math
 
 from xtquant.xttrader import XtQuantTrader
 from xtquant import xtconstant
+
+from helper import notifier
 from service.trade_callback import TradeCallback
 from service import account, adaptive_task_processor
 import time
@@ -74,6 +76,9 @@ class TraderService:
                 self.account, stock_code, xtconstant.STOCK_BUY, bid_num, xtconstant.FIX_PRICE, bid_price,
                 strategy_name
             )
+        except Exception as e:
+            logger.exception(f"async_buy CRASHED: {e}")
+            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
         finally:
             lock.release()
 
@@ -92,6 +97,9 @@ class TraderService:
                 self.account, stock_code, xtconstant.STOCK_SELL, sell_num, xtconstant.FIX_PRICE, sell_price,
                 strategy_name
             )
+        except Exception as e:
+            logger.exception(f"async_sell CRASHED: {e}")
+            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
         finally:
             lock.release()
 
@@ -146,9 +154,6 @@ class TraderStrategyService:
     def to_buy(self, inner_stock_infos, target_index_infos, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = inner_stock_infos[stock_code]
         index_info = target_index_infos[stock_info['target_index']]
-        logger.info(f"inner_stock_info: {stock_info}")
-        logger.info(f"target_index_info: {index_info}")
-        logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate'])*0.9), 4)}")
         # 卖不用管，买需要加锁，防止重复购买
         logger.info(f"to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         lock = self._get_lock(stock_code)
@@ -165,7 +170,20 @@ class TraderStrategyService:
                 hold_num = stock_info['hold_num']
                 # 已经持仓的金额
                 holding_money = round(stock_info['hold_num'] * 100 * stock_info['askPrice'][0], 2)
+                logger.info(f"holding_money: {holding_money}, index_holding_money: {index_info['index_total_market_value']}")
                 max_able_bid_money = self.max_bid_money - holding_money
+                if max_able_bid_money < self.min_bid_money:
+                    logger.info(f"{stock_code}已持有足够多了， holding_money: {holding_money}元, {max_able_bid_money} < {self.min_bid_money}")
+                    return
+                # 计算当前指数共持仓多少钱，
+                index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
+                logger.info(f"该指数共持仓已达: {index_info['index_total_market_value']}元，还有{index_unused_money_capacity}元额度可买")
+                if index_unused_money_capacity < max_able_bid_money:
+                    max_able_bid_money = index_unused_money_capacity
+
+                if max_able_bid_money < self.min_bid_money:
+                    logger.info(f"{stock_code} 对应的相同的指数已持有足够多了， holding_money: {index_info['index_total_market_value']}元, {max_able_bid_money} < {self.min_bid_money}")
+                    return
                 asset = self.trader_service.get_asset()
                 logger.info(f"此时cash： {asset.cash}")
                 if asset.cash - self.frozen_money <= max_able_bid_money:
@@ -189,6 +207,7 @@ class TraderStrategyService:
                     logger.info(f"{stock_code} 可买的太少了 {max_able_bid_money} < {self.min_bid_money}")
                     return
                 if bid_money == 0:
+                    logger.info(f"bid_money: {bid_money}, give up to buy")
                     return
                 # 可买的数量太少也放弃出价
                 if bid_money < self.min_bid_money:
@@ -206,8 +225,16 @@ class TraderStrategyService:
                     # 出价以后，把卖盘中卖一的队列数量进行相应的减掉
                     ask_vol_remain = round(inner_stock_infos[stock_code]['askVol'][0] - bid_num)
                     inner_stock_infos[stock_code]['askVol'][0] = max(0, ask_vol_remain)
-                    self.processor.submit_task(self.order_buy_thread, stock_code, bid_price, bid_num, stock_info, hold_num, inner_stock_infos, fresh_holding)
+                    self.processor.submit_task(self.order_buy_thread, stock_code, bid_price, bid_num, stock_info, hold_num, inner_stock_infos, target_index_infos, fresh_holding)
+                    logger.info(f"inner_stock_info: {stock_info}")
+                    logger.info(f"target_index_info: {index_info}")
+                    logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate']) * 0.95), 4)}")
                     return
+                else:
+                    logger.info(f"to buy gives up, bid_num: {bid_num}, bid_price: {bid_price}, bid_money: {bid_money}")
+        except Exception as e:
+            logger.exception(f"to_buy CRASHED: {e}")
+            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
         finally:
             logger.info(f"release lock {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
             lock.release()
@@ -215,9 +242,6 @@ class TraderStrategyService:
     def to_sell(self, inner_stock_infos, target_index_infos, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = inner_stock_infos[stock_code]
         index_info = target_index_infos[stock_info['target_index']]
-        logger.info(f"inner_stock_info: {stock_info}")
-        logger.info(f"target_index_info: {index_info}")
-        logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth'])*(1+float(index_info['increase_rate']) * 0.9), 4)}")
         logger.info(f"to_sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         if len(stock_info['bidPrice']) > 0 and stock_info['hold_can_use_num'] > 0:
             sell_price = stock_info['bidPrice'][0]
@@ -250,7 +274,10 @@ class TraderStrategyService:
                 # 出价以后，把买盘中买一的队列数量进行相应的减掉
                 bid_vol_remain = round(inner_stock_infos[stock_code]['bidVol'][0] - sell_num)
                 inner_stock_infos[stock_code]['bidVol'][0] = max(0, bid_vol_remain)
-                self.processor.submit_task(self.order_sell_thread, stock_code, sell_price, sell_num, stock_info, inner_stock_infos, fresh_holding)
+                self.processor.submit_task(self.order_sell_thread, stock_code, sell_price, sell_num, stock_info, inner_stock_infos, target_index_infos, fresh_holding)
+                logger.info(f"inner_stock_info: {stock_info}")
+                logger.info(f"target_index_info: {index_info}")
+                logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate']) * 0.9), 4)}")
 
     def sell_then_buy(self, inner_stock_infos, target_index_infos, first_buy_queue_node, first_sell_queue_node):
         self.processor.submit_task(self.order_sell_then_buy_thread, inner_stock_infos, target_index_infos, first_buy_queue_node, first_sell_queue_node)
@@ -262,7 +289,7 @@ class TraderStrategyService:
                 logger.info(f"撤销委托, {sell_stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]},  "
                             f"order_id: {item.order_id}, 撤销结果: {self.trader_service.cancel(item.order_id)}")
 
-    def order_buy_thread(self, stock_code, bid_price, bid_num, stock_info, hold_num, inner_stock_infos, fresh_holding):
+    def order_buy_thread(self, stock_code, bid_price, bid_num, stock_info, hold_num, inner_stock_infos, target_index_infos, fresh_holding):
         lock = self._get_lock(stock_code)
         lock.acquire()
         try:
@@ -281,15 +308,18 @@ class TraderStrategyService:
                 # 更新持有信息
                 if fresh_holding:
                     time.sleep(2)
-                    data_loader.fresh_holding(inner_stock_infos, self.trader_service.get_holding())
+                    data_loader.fresh_holding(inner_stock_infos, target_index_infos, self.trader_service.get_holding())
             else:
                 logger.error("下单失败")
             logger.info(f"buy executed over {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        except Exception as e:
+            logger.exception(f"order_buy_thread CRASHED: {e}")
+            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
         finally:
             lock.release()
             logger.info(f"order_buy_thread release lock {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
-    def order_sell_thread(self, stock_code, sell_price, sell_num, stock_info, inner_stock_infos, fresh_holding=True):
+    def order_sell_thread(self, stock_code, sell_price, sell_num, stock_info, inner_stock_infos, target_index_infos, fresh_holding=True):
         order_id = self.trader_service.sync_sell(stock_code, sell_price, sell_num, self.strategy_name, inner_stock_infos)
         logger.info(f"order_sell_thread 卖出orderid: {order_id}")
         if order_id:
@@ -301,7 +331,7 @@ class TraderStrategyService:
         # 更新持有信息
         if fresh_holding:
             time.sleep(1.5)
-            data_loader.fresh_holding(inner_stock_infos, self.trader_service.get_holding())
+            data_loader.fresh_holding(inner_stock_infos, target_index_infos, self.trader_service.get_holding())
         logger.info(f"sell executed over {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     def order_sell_then_buy_thread(self, inner_stock_infos, target_index_infos, first_buy_queue_node, first_sell_queue_node):
@@ -319,7 +349,10 @@ class TraderStrategyService:
             time.sleep(1.5)
             self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
             time.sleep(1.5)
-            data_loader.fresh_holding(inner_stock_infos, self.trader_service.get_holding())
+            data_loader.fresh_holding(inner_stock_infos, target_index_infos, self.trader_service.get_holding())
             logger.info(f"order_sell_then_buy_thread end {first_sell_queue_node.code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        except Exception as e:
+            logger.exception(f"order_sell_then_buy_thread CRASHED: {e}")
+            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
         finally:
             lock.release()
