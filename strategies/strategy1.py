@@ -293,6 +293,9 @@ class Strategy1:
                     self.trader_strategy_service.sell_then_buy(self.inner_stock_infos, self.target_index_infos, first_buy_queue_node, first_sell_queue_node)
                     logger.info(f"origin_tick: {origin_tick}")
                     return True
+        except Exception as e:
+            logger.exception(f"analysis_and_decision_mking CRASHED: {e}")
+            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
         finally:
             total_time = time.perf_counter()
             total_consume = total_time - start_time

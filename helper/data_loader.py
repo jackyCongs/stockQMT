@@ -90,20 +90,16 @@ def fresh_holding(inner_stock_infos, target_index_infos, holding):
     index_exposure_agg = {}
     # 遍历所有股票信息，更新持仓状态和数量
     for stock_code, info in inner_stock_infos.items():
-        index_code = info.get('index_code', stock_code)
+        index_code = info.get('target_index')
         if stock_code in holding_dict:
             hold = holding_dict[stock_code]
-            market_value = round(hold.volume * hold.open_price)
             info.update({
                 'hold_can_use_num': hold.can_use_volume // 100,
                 'hold_num': hold.volume // 100,
-                'hold_market_value': market_value,
+                'hold_market_value': float(hold.market_value),
                 'hold_status': 1  # [0没持有， 2买入中， 1持有中]
             })
-            # logger.info(f"加载已持有股票: {stock_code} - {info}")
-            # 将单票市值累加到对应的指数敞口池中
-            index_exposure_agg[index_code] = index_exposure_agg.get(index_code, 0.0) + market_value
-            # logger.info(f"加载指数已持有: {index_code} - {index_exposure_agg[index_code]}")
+            index_exposure_agg[index_code] = index_exposure_agg.get(index_code, 0.0) + float(hold.market_value)
         else:
             # 未持有该股票，清空相关数据
             info.update({
@@ -113,7 +109,7 @@ def fresh_holding(inner_stock_infos, target_index_infos, holding):
                 'hold_status': 0
             })
     for index_code, index_info in target_index_infos.items():
-        index_info['index_total_market_value'] = index_exposure_agg.get(index_code, 0.0)
+        target_index_infos[index_code]['index_total_market_value'] = index_exposure_agg.get(index_code, 0.0)
     print(f"done fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
 def interval_fresh_holding(inner_stock_infos, target_index_infos, trader_service, second=15):

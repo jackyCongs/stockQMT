@@ -33,8 +33,7 @@ class Strategy2:
         # 每次出价最低多少钱
         self.min_bid_amount = 100
 
-        #todo 这里为了方便测试有更多数据设置了0，开放测试后要设置回来
-        self.base_premium_threshold = 0.25
+        self.base_premium_threshold = 0.3
         self.strategy_name = "ETF策略"
         self.strategy_etf_type = "etf"
         self.platform = platform
@@ -143,10 +142,9 @@ class Strategy2:
                 # maintain a premium queue
                 stock_info['last_net_worth'] = float(stock_info['last_net_worth'])
                 index_info['increase_rate'] = float(index_info['increase_rate'])
-                if index_info['increase_rate'] > 0:
-                    appraisal = round(stock_info['last_net_worth'] * (1 + index_info['increase_rate'] * 0.90), 6)
-                else:
-                    appraisal = round(stock_info['last_net_worth'] * (1 + index_info['increase_rate'] * 0.95), 6)
+
+                appraisal = round(stock_info['last_net_worth'] * (1 + index_info['increase_rate'] * 0.95), 6)
+
                 self.premium_manager.update(appraisal, code, target_index, stock_info, index_info)
                 # it's the time to design trading part
                 first_buy_queue_node = self.premium_manager.buy_queue[target_index].head
