@@ -126,8 +126,9 @@ class PremiumStrategyManager:
             self.buy_queue[index_code] = StockQueue()
         current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
         should_remove_sell = True  # 默认标记为移除，除非满足特定条件
-        # 逻辑：总持仓金额未超限
-        if current_hold_val + self.min_bid_money < self.max_bid_money:
+        index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
+        # 逻辑：总持仓金额未超限、指数总持仓未超限
+        if (current_hold_val + self.min_bid_money < self.max_bid_money) and (index_unused_money_capacity > self.min_bid_money):
             # 卖一价有效且小于估值
             if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] <= appraisal:
                 # 动态计算门槛

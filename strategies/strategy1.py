@@ -307,7 +307,10 @@ class Strategy1:
         # premium符合要求，并且委卖大于最小买入金额，并且已经持有的金额不超过最大限制，维护到双向链表队列中
         appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
-        if float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100 + self.min_bid_money < self.max_bid_money:
+        current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
+        index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
+        # 逻辑：总持仓金额未超限、指数总持仓未超限
+        if (current_hold_val + self.min_bid_money < self.max_bid_money) and (index_unused_money_capacity > self.min_bid_money):
             if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
                 self.sell_queue.remove_stock(stock_code)
             overheating_penalty = data_loader.get_overheating_penalty(index_info['increase_rate'])
