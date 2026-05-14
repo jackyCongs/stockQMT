@@ -151,8 +151,7 @@ class StockService:
             logger.info(f"✅ 数据校验通过：预期 {len(self.index_codes)} 条，实际 {len(updated_index_codes)} 条。")
         else:
             # 找出缺失的具体代码
-            missing_codes = self.index_codes - updated_index_codes
-            # 触发报警 (这里可以接入你的钉钉/微信/邮件机器人)
+            missing_codes = set(self.index_codes) - set(updated_index_codes)
             alert_msg = (
                 f"交易日期: {self.trade_date}\n"
                 f"预期数量: {len(self.index_codes)}\n"

@@ -207,6 +207,9 @@ class Strategy2:
             print_count_index += 1
             if print_count_index % 1011 == 0:
                 print_count_index = 0
+                thread_id = threading.get_ident()
+                thread_name = threading.current_thread().name
+                logging.info(f"Handler Thread: {thread_name} (ID: {thread_id})")
                 logging.info(f'{datetime.now()} main函数运行耗时 {(time.perf_counter() - t0) * 1000:.3f} ms, 处理订阅任务数量: {len(msgs)}个')
 
     def handle_index(self, index_tick, index_code):
