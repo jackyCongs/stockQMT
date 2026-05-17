@@ -9,11 +9,11 @@ from db.db_pool import DBPool
 from service.stock_service import StockService
 from service.trader_service import TraderService
 from service.trans_flows import TransFlows
+from service.index_snapshot_service import IndexSnapshotSynchronizer
 from strategies.strategy1 import Strategy1
 from strategies.strategy2 import Strategy2
 from helper.time_utils import get_time
 from helper import log_utils
-from helper import data_loader
 
 log_format = '%(asctime)s | %(levelname)s | %(name)s.%(funcName)s:%(lineno)d | %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format, filename='logs/app.log', encoding='utf-8', filemode='a') #, force=True
@@ -74,6 +74,8 @@ if __name__ == '__main__':
             logger.info("Updating index data...")
             stock_service.update_index_daily_history(fund_spider_cookie)
             logger.info("Index data update completed...")
+        elif args.mode == '3':
+            IndexSnapshotSynchronizer(db).sync_latest_weights()
         else:
             logger.info(f"Unknown execution mode: {args.mode}")
     except Exception as e:
