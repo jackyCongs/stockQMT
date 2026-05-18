@@ -21,16 +21,14 @@ MARKET_TIMES = {
 
 def enhance_stock_code(code, type='stock', ignore_warning = False):
     if type == 'index':
-        if code.startswith('H') or code.startswith('000') or code.startswith('9'):
+        if code.startswith('H'):
+            return f"{code}.SH"
+        if code.startswith('000'):
             return f"{code}.SH"
         if code.startswith('399'):
-            code_int = int(code)
-            if code_int >= 399800:
-                return f"{code}.SH"
-            CSI_3997XX_WHITELIST = {399706, 399707}
-            if code_int in CSI_3997XX_WHITELIST:
-                return f"{code}.SH"
             return f"{code}.SZ"
+        if code.startswith("9"):
+            return f"{code}.SH"
         if not ignore_warning:
             logger.warning(f"当前 code: {code}-{type}, 无对应来源")
         return code
