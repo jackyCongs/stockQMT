@@ -10,6 +10,7 @@ from service.stock_service import StockService
 from service.trader_service import TraderService
 from service.trans_flows import TransFlows
 from service.index_snapshot_service import IndexSnapshotSynchronizer
+from service.index_calculator_service import IndexReplicationCalculator
 from strategies.strategy1 import Strategy1
 from strategies.strategy2 import Strategy2
 from helper.time_utils import get_time
@@ -75,7 +76,16 @@ if __name__ == '__main__':
             stock_service.update_index_daily_history(fund_spider_cookie)
             logger.info("Index data update completed...")
         elif args.mode == '3':
+            # 第一阶段：智能同步最新权重文件
+            logger.info(">>> 阶段一：执行权重文件同步...")
             IndexSnapshotSynchronizer(db).sync_latest_weights()
+
+            # 第二阶段：计算虚拟股数并强制对齐入库
+            logger.info(">>> 阶段二：提取复权基准、计算虚拟股数并入库...")
+            calculator = IndexReplicationCalculator(db_pool=db, base_capital=1000000000)
+            calculator.process_all_indices()
+
+            logger.info("=== [AlphaCore] 盘前流水线全部执行完毕，弹药已上膛 ===")
         else:
             logger.info(f"Unknown execution mode: {args.mode}")
     except Exception as e:
