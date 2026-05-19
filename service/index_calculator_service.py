@@ -3,6 +3,7 @@ import re
 import time
 import logging
 import warnings
+from datetime import datetime, timedelta
 import pandas as pd
 from db.idx_components import save_index_components
 from xtquant import xtdata
@@ -27,7 +28,8 @@ class IndexReplicationCalculator:
             return f"{code_str}.SH"
         elif code_str.startswith('00') or code_str.startswith('30'):
             return f"{code_str}.SZ"
-        elif code_str.startswith('8') or code_str.startswith('4'):
+        # 【核心修复】兼容北交所新规：除了老旧的 8/4 字头，全线吃进 2024 年上线的 920 新代码序列
+        elif code_str.startswith('8') or code_str.startswith('4') or code_str.startswith('920'):
             return f"{code_str}.BJ"
         return code_str
 
@@ -50,11 +52,16 @@ class IndexReplicationCalculator:
                     continue
             return pd.DataFrame()
 
-    def _find_column(self, df, keywords):
-        """智能寻找对应的列名"""
+    def _find_column(self, df, include_keywords, exclude_keywords=None):
+        """智能寻找对应的列名，支持排除特定关键字以免误判"""
+        if exclude_keywords is None:
+            exclude_keywords = []
+
         for col in df.columns:
             col_str = str(col).lower()
-            if any(k in col_str for k in keywords):
+            if any(k in col_str for k in include_keywords):
+                if any(ex_k in col_str for ex_k in exclude_keywords):
+                    continue
                 return col
         return None
 
@@ -80,12 +87,12 @@ class IndexReplicationCalculator:
             if df.empty:
                 continue
 
-            col_code = self._find_column(df, ['代码', 'code'])
-            col_name = self._find_column(df, ['简称', '名称', 'name'])
+            col_code = self._find_column(df, ['代码', 'code'], exclude_keywords=['指数', 'index'])
+            col_name = self._find_column(df, ['简称', '名称', 'name'], exclude_keywords=['指数', 'index'])
             col_weight = self._find_column(df, ['权重', 'weight'])
 
             if not col_code or not col_weight:
-                logger.warning(f"[{index_code}] 文件缺少核心字段(代码/权重)，跳过。")
+                logger.warning(f"[{index_code}] 文件缺少核心字段(成分券代码/权重)，跳过。")
                 continue
 
             qmt_stock_list = []
@@ -95,9 +102,19 @@ class IndexReplicationCalculator:
                 raw_code = str(row[col_code]).strip()
                 if raw_code == 'nan' or not raw_code:
                     continue
+
                 raw_name = str(row[col_name]).strip() if col_name else ""
+                if raw_name.lower() == 'nan':
+                    raw_name = ""
+
+                raw_weight_val = row[col_weight]
+                if pd.isna(raw_weight_val):
+                    continue
+
                 try:
-                    raw_weight = float(row[col_weight])
+                    raw_weight = float(raw_weight_val)
+                    if pd.isna(raw_weight):
+                        continue
                 except ValueError:
                     continue
 
@@ -109,16 +126,29 @@ class IndexReplicationCalculator:
                     'weight_percent': raw_weight
                 }
 
+            base_dt = datetime.strptime(base_date_str, '%Y%m%d')
+            start_dt = base_dt - timedelta(days=90)
+            start_search_date_str = start_dt.strftime('%Y%m%d')
+
             db_date = f"{base_date_str[:4]}-{base_date_str[4:6]}-{base_date_str[6:]}"
 
-            xtdata.download_history_data2(qmt_stock_list, period='1d', start_time=base_date_str, end_time=base_date_str)
+            # =======================================================
+            # 撤销全部防御：不拦截空列表，不使用 try-except
+            # 让 QMT 的原生调用和潜在的任何异常直接赤裸裸暴露在控制台
+            # =======================================================
+            xtdata.download_history_data2(
+                qmt_stock_list,
+                period='1d',
+                start_time=start_search_date_str,
+                end_time=base_date_str
+            )
             time.sleep(0.2)
 
             market_data = xtdata.get_market_data_ex(
                 field_list=['close'],
                 stock_list=qmt_stock_list,
                 period='1d',
-                start_time=base_date_str,
+                start_time=start_search_date_str,
                 end_time=base_date_str,
                 dividend_type='front'
             )
@@ -128,30 +158,41 @@ class IndexReplicationCalculator:
             for qmt_code in qmt_stock_list:
                 meta = component_meta[qmt_code]
 
-                # 动态审计
                 detail = xtdata.get_instrument_detail(qmt_code)
                 if detail is None:
                     status = 0
                     initial_remark = "盘前审计：QMT基础资料缺失/疑似退市"
                 else:
-                    status = 1  # 正常交易
-                    initial_remark = ""
+                    status = 1
+                    initial_remark = "官方在册：正常运作"
 
                 base_price = 0.0
+                is_suspended_on_base = False
+
                 if qmt_code in market_data and not market_data[qmt_code].empty:
                     df_px = market_data[qmt_code]
-                    if len(df_px) > 0:
-                        base_price = float(df_px['close'].iloc[0])
+
+                    if base_date_str in df_px.index:
+                        px_val = df_px.loc[base_date_str, 'close']
+                        if pd.notna(px_val) and float(px_val) > 0:
+                            base_price = float(px_val)
+
+                    if base_price <= 0:
+                        valid_history_df = df_px[pd.notna(df_px['close'])]
+                        if not valid_history_df.empty:
+                            base_price = float(valid_history_df['close'].iloc[-1])
+                            is_suspended_on_base = True
 
                 synthetic_shares = 0.0
                 if base_price > 0:
                     actual_weight = meta['weight_percent'] / 100.0
                     synthetic_shares = (self.base_capital * actual_weight) / base_price
-                else:
-                    # 如果拿不到开盘基准价，说明今天可能突发停牌爆雷，记录到备注
-                    initial_remark = "数据异常：未能获取到前复权基准价"
 
-                # 构建符合最新带 remark 字段的数据字典
+                    if is_suspended_on_base:
+                        initial_remark = "官方在册：基准日停牌(已自动追溯复牌前最后收盘价)"
+                else:
+                    initial_remark = "数据异常：向前追溯90天仍未能获取到任何有效价格"
+
                 record = {
                     'index_code': index_code,
                     'index_name': '',
@@ -162,9 +203,8 @@ class IndexReplicationCalculator:
                     'base_price': base_price,
                     'synthetic_shares': synthetic_shares,
                     'status': status,
-                    'remark': initial_remark  # 塞入初始备注，适配新列
+                    'remark': initial_remark
                 }
                 db_records.append(record)
 
-            # 执行入库编排
             save_index_components(self.db_pool, index_code, db_records)
