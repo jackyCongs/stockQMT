@@ -90,7 +90,7 @@ def save_index_components(db_pool, index_code, components_data):
         conn.rollback()
         logger.error(f"[{index_code}] 合并更新失败，发生事务回滚: {e}")
     finally:
-        db_pool.release_connection(conn)
+        conn.close()
 
 
 def get_active_components(db_pool):
@@ -113,12 +113,12 @@ def get_active_components(db_pool):
             # ==========================================
             # 注意：PyMySQL 中使用 %% 来转义 % 符号
             tainted_sql = """
-                SELECT DISTINCT index_code 
-                FROM idx_components 
-                WHERE synthetic_shares <= 0 
-                   OR base_price <= 0 
-                   OR (status = 0 AND remark NOT LIKE '%%剔除%%')
-            """
+                            SELECT DISTINCT index_code 
+                            FROM idx_components 
+                            WHERE (status = 1 AND base_price <= 0)
+                               OR (status = 1 AND synthetic_shares <= 0 AND weight_percent > 0)
+                               OR (status = 0 AND remark NOT LIKE '%%剔除%%')
+                        """
             cursor.execute(tainted_sql)
             tainted_rows = cursor.fetchall()
 
@@ -177,8 +177,4 @@ def get_active_components(db_pool):
         logger.error(f"提取有效成分股失败: {e}")
         return {}
     finally:
-        # 顺手帮你优化了一下，之前这里是 conn.close()，使用连接池应该用 release_connection
-        if hasattr(db_pool, 'release_connection'):
-            db_pool.release_connection(conn)
-        else:
-            conn.close()
+        conn.close()

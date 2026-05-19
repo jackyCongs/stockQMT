@@ -203,11 +203,6 @@ def get_index_penalty_rate(db, index_code, trade_date):
 
 
 def get_index_pre_close(db_pool, trade_date):
-    """
-    从 index_daily_history 获取指定日期 (T-1) 的指数收盘点位
-    :param trade_date: str, 格式 'YYYY-MM-DD'，如 '2026-05-15'
-    :return: dict, 结构如 {'000808': 7782.68, '931587': 22073.51}
-    """
     conn = db_pool.get_connection()
     if not conn:
         return {}
@@ -224,10 +219,16 @@ def get_index_pre_close(db_pool, trade_date):
             rows = cursor.fetchall()
 
             for row in rows:
-                pre_close_map[row['index_code']] = float(row['close_price'])
+                # 【核心修复】加入游标类型兼容装甲：无论是字典游标还是元组游标，统统拿下！
+                idx_code = row['index_code'] if isinstance(row, dict) else row[0]
+                close_px = row['close_price'] if isinstance(row, dict) else row[1]
+
+                pre_close_map[idx_code] = float(close_px)
+
         return pre_close_map
     except Exception as e:
-        exit(e)
+        # 这里建议用 print 打印具体错误，而不是直接 exit(e) 把整个主程序杀掉
+        print(f"提取指数昨收点位失败: {e}")
         return {}
     finally:
         conn.close()

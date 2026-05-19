@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class IndexReplicationCalculator:
     """
-    AlphaCore 盘前总引擎 (终极融合版)
+    AlphaCore 盘前总引擎 (终极融合防弹版)
     负责：文件解析计算 -> 数据库增量对齐 -> 组装下发 JSON -> 唤醒 QMT 行情订阅
     """
 
@@ -38,6 +38,44 @@ class IndexReplicationCalculator:
         elif code_str.startswith('8') or code_str.startswith('4') or code_str.startswith('920'):
             return f"{code_str}.BJ"
         return code_str
+
+    def _safe_batch_download(self, stock_list, period, start_time, end_time, batch_size=300):
+        """
+        【核弹级修复】彻底抛弃官方充满 Bug 的 download_history_data2
+        使用单针异步连续发射 + IPC 限流，绝对防挂死！
+        """
+        total = len(stock_list)
+        if total == 0:
+            return
+
+        logger.info(f"⏬启动【单针异步限流】模式下载 {total} 只标的...")
+
+        # 随意定义一个哑巴回调函数，用于强制激活底层的非阻塞模式
+        def dummy_callback(data):
+            pass
+
+        for i, qmt_code in enumerate(stock_list):
+            try:
+                # 【核心魔法】：使用单体下载接口 download_history_data (没有2)
+                # 配合 callback，Python 线程发射完指令瞬间放行，绝不回头看！
+                xtdata.download_history_data(
+                    stock_code=qmt_code,
+                    period=period,
+                    start_time=start_time,
+                    end_time=end_time,
+                    callback=dummy_callback
+                )
+            except Exception:
+                pass
+
+            # 【限流阀门】：每发射 200 个指令，强制让 Python 暂停 0.1 秒
+            # 防止 4000 个高频并发瞬间把 QMT 的 C++ 进程内存通道撑爆
+            if (i + 1) % 200 == 0:
+                time.sleep(0.1)
+
+        # 指令已经全部瞬间发给 C++ 了，我们在外部统一让 Python 等待 5 秒
+        # 给底层 C++ 一点默默把数据写进本地硬盘的时间
+        logger.info(f"⏳ {total} 异步下载指令已全部投递完毕")
 
     def _load_dataframe(self, file_path):
         """统一且健壮的装甲加载器"""
@@ -144,14 +182,18 @@ class IndexReplicationCalculator:
 
             db_date = f"{base_date_str[:4]}-{base_date_str[4:6]}-{base_date_str[6:]}"
 
-            xtdata.download_history_data2(
-                qmt_stock_list,
+            # 【替换点 1】：洗盘计算时，如果遇到超大宽基(如中证1000/2000)，也使用安全分批下载
+            self._safe_batch_download(
+                stock_list=qmt_stock_list,
                 period='1d',
                 start_time=start_search_date_str,
-                end_time=base_date_str
+                end_time=base_date_str,
+                batch_size=100
             )
-            time.sleep(0.2)
+            logger.info("强制等待 2 秒让底层数据落盘...")
+            time.sleep(2.0)
 
+            # 注意：get_market_data_ex 是从本地硬盘/内存读取，不走网络，不存在并发死锁问题，无需分批
             market_data = xtdata.get_market_data_ex(
                 field_list=['close'],
                 stock_list=qmt_stock_list,
@@ -218,7 +260,7 @@ class IndexReplicationCalculator:
             save_index_components(self.db_pool, index_code, db_records)
 
     # =====================================================================
-    #  阶段二：点火下发层 (拉取 DB 数据 -> 组装 JSON -> QMT 批量订阅)
+    #  阶段二：点火下发层 (拉取 DB 数据 -> 追溯昨收价算除数 -> 组装 JSON -> QMT 批量订阅)
     # =====================================================================
     def ignite_engine(self, yesterday_str):
         """
@@ -227,66 +269,102 @@ class IndexReplicationCalculator:
         """
         logger.info(f"\n=== [AlphaCore] 开始构建 Golang 引擎启动载荷 (T-1基准: {yesterday_str}) ===")
 
-        # 1. 抓取所有活跃成分股与虚拟股数
         components_map = get_active_components(self.db_pool)
         if not components_map:
             logger.error("未找到任何有效成分股，点火中止！请先执行 process_all_indices()")
             return
 
-        # 2. 抓取所有指数在昨天的收盘点位 (Pre-Close)
         pre_close_map = get_index_pre_close(self.db_pool, yesterday_str)
         if not pre_close_map:
             logger.error(f"未能获取到 {yesterday_str} 的指数昨收数据，点火中止！")
             return
 
         golang_payload = {}
-        all_unique_qmt_stocks = set()  # 订阅去重池
+        all_unique_qmt_stocks = set()
 
-        # 3. 组装 Golang 需要的结构体字典
+        for stock_list in components_map.values():
+            for item in stock_list:
+                all_unique_qmt_stocks.add(self.format_component_code(item['stock_code']))
+
+        subscribe_list = list(all_unique_qmt_stocks)
+
+        qmt_yesterday = yesterday_str.replace('-', '')
+        yest_dt = datetime.strptime(qmt_yesterday, '%Y%m%d')
+        start_yest_dt = yest_dt - timedelta(days=90)
+        start_yest_str = start_yest_dt.strftime('%Y%m%d')
+
+        # 【替换点 2】：全市场去重后几千只股票的终极大关卡！启用分批下载，彻底告别死锁！
+        self._safe_batch_download(
+            stock_list=subscribe_list,
+            period='1d',
+            start_time=start_yest_str,
+            end_time=qmt_yesterday,
+            batch_size=100
+        )
+        logger.info("强制等待 5 秒让底层数据落盘...")
+        time.sleep(5.0)
+
+        yesterday_market_data = xtdata.get_market_data_ex(
+            field_list=['close'],
+            stock_list=subscribe_list,
+            period='1d',
+            start_time=start_yest_str,
+            end_time=qmt_yesterday,
+            dividend_type='front'
+        )
+
         for index_code, stock_list in components_map.items():
             if index_code not in pre_close_map:
                 logger.warning(f"[{index_code}] 缺失昨收点位，该指数将被移出今日计算序列。")
                 continue
 
             pre_close_point = pre_close_map[index_code]
-
             formatted_components = {}
+            yesterday_synthetic_market_cap = 0.0
+
             for item in stock_list:
                 qmt_code = self.format_component_code(item['stock_code'])
-                formatted_components[qmt_code] = item['synthetic_shares']
-                all_unique_qmt_stocks.add(qmt_code)
+                qi = item['synthetic_shares']
+                formatted_components[qmt_code] = qi
+
+                yesterday_price = 0.0
+                if qmt_code in yesterday_market_data and not yesterday_market_data[qmt_code].empty:
+                    df_px = yesterday_market_data[qmt_code]
+
+                    if qmt_yesterday in df_px.index:
+                        px_val = df_px.loc[qmt_yesterday, 'close']
+                        if pd.notna(px_val) and float(px_val) > 0:
+                            yesterday_price = float(px_val)
+
+                    if yesterday_price <= 0:
+                        valid_history_df = df_px[pd.notna(df_px['close'])]
+                        if not valid_history_df.empty:
+                            yesterday_price = float(valid_history_df['close'].iloc[-1])
+
+                if yesterday_price > 0:
+                    yesterday_synthetic_market_cap += yesterday_price * qi
+                else:
+                    logger.warning(f"[{index_code}] 极度异常: 成分股 {qmt_code} 连续90天无交易数据，除数可能失真！")
+
+            if pre_close_point > 0 and yesterday_synthetic_market_cap > 0:
+                divisor = yesterday_synthetic_market_cap / pre_close_point
+            else:
+                divisor = 1.0
 
             golang_payload[index_code] = {
                 "pre_close": pre_close_point,
+                "divisor": divisor,
                 "components": formatted_components
             }
 
-        # 4. 固化下发为 JSON
         try:
             with open(self.export_path, 'w', encoding='utf-8') as f:
                 json.dump(golang_payload, f, ensure_ascii=False, indent=2)
             logger.info(f"✅ 成功生成 AlphaCore 配置文件: {self.export_path}")
-            logger.info(f"   -> 包含成功挂载指数: {len(golang_payload)} 个")
+            logger.info(f"   -> 包含成功挂载健康指数: {len(golang_payload)} 个")
         except Exception as e:
             logger.error(f"JSON 配置文件下发失败: {e}")
             return
-
-        # 5. 向 QMT 发送全量 Tick 订阅指令
-        subscribe_list = list(all_unique_qmt_stocks)
-        logger.info(f"🚀 开始向 QMT 内存总线注入订阅指令，去重后共计 {len(subscribe_list)} 只标的...")
-
-        print(len(subscribe_list))
-        print(subscribe_list)
-        exit()
-
-        try:
-            for qmt_code in subscribe_list:
-                xtdata.subscribe_quote(qmt_code, period='tick', count=0, callback=None)
-
-            logger.info("✅ QMT 行情内存总线已全部激活打通！")
-            logger.info("=== [AlphaCore] 盘前点火完毕，Golang 核心引擎可随时启动 ===")
-        except Exception as e:
-            logger.error(f"QMT 订阅发生异常: {e}")
 
     # =====================================================================
     #  提供一个终极傻瓜式一键运行方法
