@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import paho.mqtt.client as mqtt
+from helper import notifier
 from xtquant import xtdata
 
 # 配置高性能日志（关掉 DEBUG，只保留警告和错误，节约盘中 I/O）
@@ -49,65 +50,51 @@ class IndexMqGateway:
         self.subscribe_list = list(all_stocks)
         print(f"✅ 从配置文件加载完毕，今日需监听成分股总数: {len(self.subscribe_list)} 只")
 
-    def on_tick_callback(self, data):
+    def on_whole_tick_callback(self, datas):
         """
-        【极其核心：极速回调函数】
-        QMT 推送过来的格式: {'600519.SH': [{'time': 1716200000000, 'lastPrice': 1700.5, ...}]}
-        这里的代码必须极度精简，绝对不能有任何 DB 操作或 time.sleep！
+        【极限压榨性能：全推批量聚合回调】
+        将同一瞬间推送过来的碎片化 Tick 打包成一个 JSON 数组，单次 I/O 发送！
         """
         try:
-            for stock_code, tick_list in data.items():
-                if not tick_list:
+            batch_payload = []
+            for stock_code, tick_data in datas.items():
+                if not tick_data:
                     continue
 
-                # 通常只取最新的一笔 Tick
-                latest_tick = tick_list[-1]
-
-                # -------------------------------------------------------------
-                # 【带宽压榨优化】：为了防止 4000 只股票把 NanoMQ 塞满
-                # 我们必须把长单词缩短，只保留 Golang 算点位必备的最小字段！
+                # 由于我们取消了按主题区分代码，这里必须把股票代码 "c" 塞进包里供 Golang 识别
                 # p: 最新价, v: 成交量, a: 成交额, t: 时间戳
-                # -------------------------------------------------------------
-                mini_payload = json.dumps({
-                    "p": latest_tick.get("lastPrice", 0),
-                    "v": latest_tick.get("volume", 0),
-                    "a": latest_tick.get("amount", 0),
-                    "t": latest_tick.get("time", 0)
+                batch_payload.append({
+                    "c": stock_code,
+                    "p": tick_data.get("lastPrice", 0),
+                    "v": tick_data.get("volume", 0),
+                    "a": tick_data.get("amount", 0),
+                    "t": tick_data.get("time", 0)
                 })
 
-                # 发布到 NanoMQ，主题格式设为: alphacore/tick/600519.SH
-                # 使用 qos=0 (最多交付一次)，追求极致的低延迟，不在乎偶尔丢一个包
+            # 如果数组不为空，执行【一发入魂】
+            if batch_payload:
                 self.mq_client.publish(
-                    topic=f"alphacore/tick/{stock_code}",
-                    payload=mini_payload,
+                    topic="alphacore/tick/batch",  # 统一合并到一个总线主题
+                    payload=json.dumps(batch_payload),
                     qos=0
                 )
         except Exception as e:
             # 盘中尽量不要 print，用 logger 记录错误
-            logger.error(f"处理 Tick 并转发 MQ 时异常: {e}")
+            logger.error(f"批量打包 Tick 并转发 MQ 时异常: {e}")
+            notifier.send_telegram_alert("报警", f"打包 Tick 并转发 MQ 时异常, on_whole_tick_callback发生错误: {str(e)[:200]},\n请立即处理")
 
     def start_gateway(self):
         """启动网关，接管 QMT 行情并永久阻塞"""
         self.connect_mq()
         self.load_subscription_list()
 
-        print("🚀 开始向 QMT 内存总线注册 Tick 订阅...")
-        # 不需要分批了，因为这里不下载历史，只是内存挂钩子
-        for qmt_code in self.subscribe_list:
-            xtdata.subscribe_quote(
-                stock_code=qmt_code,
-                period='tick',
-                count=0,
-                callback=self.on_tick_callback  # <=== 把我们写好的极速回调挂上去！
-            )
+        print("🚀 开始向 QMT 内存总线注册【全推批处理】Tick 订阅...")
 
-        print("⚡ 行情网关已全线贯通！正在源源不断地向 NanoMQ 泵入实时数据...")
-        print("🛑 保持此进程存活... (按 Ctrl+C 终止)")
+        # 【核心架构升级】：直接把所有去重代码列表扔进去，建立唯一监听总线
+        xtdata.subscribe_whole_quote(
+            code_list=self.subscribe_list,
+            callback=self.on_whole_tick_callback
+        )
 
-        # 必须调用 xtdata.run()，让主线程永久阻塞，否则 Python 脚本瞬间就结束了！
+        print("⚡ 极速行情网关已全线贯通！正在源源不断地向 NanoMQ 泵入实时聚合数据...")
         xtdata.run()
-
-
-if __name__ == '__main__':
-    gateway = QmtNanoMqGateway(mq_host='127.0.0.1', mq_port=1883)
-    gateway.start_gateway()

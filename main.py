@@ -11,6 +11,7 @@ from service.trader_service import TraderService
 from service.trans_flows import TransFlows
 from service.index_snapshot_service import IndexSnapshotSynchronizer
 from service.index_calculator_service import IndexReplicationCalculator
+from service.index_nanomq_publisher import IndexMqGateway
 from strategies.strategy1 import Strategy1
 from strategies.strategy2 import Strategy2
 from helper.time_utils import get_time
@@ -88,6 +89,9 @@ if __name__ == '__main__':
             calculator.run_daily_pipeline(yesterday_date)
 
             logger.info("=== [AlphaCore] 盘前流水线全部执行完毕，弹药已上膛 ===")
+        elif args.mode == '4':
+            gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
+            gateway.start_gateway()
         else:
             logger.info(f"Unknown execution mode: {args.mode}")
     except Exception as e:
