@@ -39,7 +39,7 @@ if __name__ == '__main__':
     }
     parser = argparse.ArgumentParser(description="StockQMT: Quantitative Trading System Runner")
     # param：-mode
-    parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2", "3"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data")
+    parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2", "3", "4"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data")
     # param：-platform
     parser.add_argument("-platform", type=str, choices=["大同证券", "湘财证券"], help="Target trading platform: 大同证券, 湘财证券")
     # param: -strategy
