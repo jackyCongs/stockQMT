@@ -91,3 +91,94 @@ def save_index_components(db_pool, index_code, components_data):
         logger.error(f"[{index_code}] 合并更新失败，发生事务回滚: {e}")
     finally:
         db_pool.release_connection(conn)
+
+
+def get_active_components(db_pool):
+    """
+    获取所有健康的指数成分股。
+    【核心风控】自动过滤掉包含港股、数据缺失的“污染指数”，并高亮打印提醒。
+    :return: dict, 结构如 {'000300': [{'stock_code': '600519', 'synthetic_shares': 1234.5}, ...]}
+    """
+    conn = db_pool.get_connection()
+    if not conn:
+        logger.error("无法获取数据库连接")
+        return {}
+
+    components_map = {}
+    try:
+        with conn.cursor() as cursor:
+            # ==========================================
+            # 1. 侦测阶段：揪出所有“被污染”的异常指数
+            # 污染特征：虚拟股数为0 / 价格为0 / (状态为0 且 并非被官方主动剔除)
+            # ==========================================
+            # 注意：PyMySQL 中使用 %% 来转义 % 符号
+            tainted_sql = """
+                SELECT DISTINCT index_code 
+                FROM idx_components 
+                WHERE synthetic_shares <= 0 
+                   OR base_price <= 0 
+                   OR (status = 0 AND remark NOT LIKE '%%剔除%%')
+            """
+            cursor.execute(tainted_sql)
+            tainted_rows = cursor.fetchall()
+
+            # 兼容游标返回的是 dict 还是 tuple
+            tainted_indices = []
+            if tainted_rows:
+                if isinstance(tainted_rows[0], dict):
+                    tainted_indices = [row['index_code'] for row in tainted_rows]
+                else:
+                    tainted_indices = [row[0] for row in tainted_rows]
+
+            # 触发强提醒，让你对摘除的指数心中有数
+            if tainted_indices:
+                logger.warning(f"⚠️ 【风控拦截】发现 {len(tainted_indices)} 个指数包含港股或严重数据缺失！")
+                logger.warning(f"⚠️ 为防止盘中算力污染与巨大跟踪误差，已将以下指数整体摘除不再挂载: {tainted_indices}")
+            else:
+                logger.info("✅ 盘前完整性审计通过，未发现受污染的异常指数。")
+
+            # ==========================================
+            # 2. 提取阶段：只拿取“健康指数”里的正常成分股
+            # ==========================================
+            if tainted_indices:
+                # 动态拼接 NOT IN 条件，屏蔽掉所有受污染的 index_code
+                format_strings = ','.join(['%s'] * len(tainted_indices))
+                healthy_sql = f"""
+                    SELECT index_code, stock_code, synthetic_shares 
+                    FROM idx_components 
+                    WHERE status = 1 AND index_code NOT IN ({format_strings})
+                """
+                cursor.execute(healthy_sql, tuple(tainted_indices))
+            else:
+                healthy_sql = """
+                    SELECT index_code, stock_code, synthetic_shares 
+                    FROM idx_components 
+                    WHERE status = 1
+                """
+                cursor.execute(healthy_sql)
+
+            rows = cursor.fetchall()
+
+            for row in rows:
+                # 兼容游标类型
+                idx_code = row['index_code'] if isinstance(row, dict) else row[0]
+                stk_code = row['stock_code'] if isinstance(row, dict) else row[1]
+                shares = row['synthetic_shares'] if isinstance(row, dict) else row[2]
+
+                if idx_code not in components_map:
+                    components_map[idx_code] = []
+                components_map[idx_code].append({
+                    'stock_code': stk_code,
+                    'synthetic_shares': float(shares)
+                })
+
+        return components_map
+    except Exception as e:
+        logger.error(f"提取有效成分股失败: {e}")
+        return {}
+    finally:
+        # 顺手帮你优化了一下，之前这里是 conn.close()，使用连接池应该用 release_connection
+        if hasattr(db_pool, 'release_connection'):
+            db_pool.release_connection(conn)
+        else:
+            conn.close()

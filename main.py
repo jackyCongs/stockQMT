@@ -15,6 +15,7 @@ from strategies.strategy1 import Strategy1
 from strategies.strategy2 import Strategy2
 from helper.time_utils import get_time
 from helper import log_utils
+import helper.data_loader as data_loader
 
 log_format = '%(asctime)s | %(levelname)s | %(name)s.%(funcName)s:%(lineno)d | %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format, filename='logs/app.log', encoding='utf-8', filemode='a') #, force=True
@@ -83,7 +84,8 @@ if __name__ == '__main__':
             # 第二阶段：计算虚拟股数并强制对齐入库
             logger.info(">>> 阶段二：提取复权基准、计算虚拟股数并入库...")
             calculator = IndexReplicationCalculator(db_pool=db, base_capital=1000000000)
-            calculator.process_all_indices()
+            yesterday_date = data_loader.get_previous_date()
+            calculator.run_daily_pipeline(yesterday_date)
 
             logger.info("=== [AlphaCore] 盘前流水线全部执行完毕，弹药已上膛 ===")
         else:

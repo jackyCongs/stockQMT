@@ -200,3 +200,34 @@ def get_index_penalty_rate(db, index_code, trade_date):
         return 0.0
     finally:
         conn.close()
+
+
+def get_index_pre_close(db_pool, trade_date):
+    """
+    从 index_daily_history 获取指定日期 (T-1) 的指数收盘点位
+    :param trade_date: str, 格式 'YYYY-MM-DD'，如 '2026-05-15'
+    :return: dict, 结构如 {'000808': 7782.68, '931587': 22073.51}
+    """
+    conn = db_pool.get_connection()
+    if not conn:
+        return {}
+
+    pre_close_map = {}
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT index_code, close_price 
+                FROM index_daily_history 
+                WHERE trade_date = %s
+            """
+            cursor.execute(sql, (trade_date,))
+            rows = cursor.fetchall()
+
+            for row in rows:
+                pre_close_map[row['index_code']] = float(row['close_price'])
+        return pre_close_map
+    except Exception as e:
+        exit(e)
+        return {}
+    finally:
+        conn.close()
