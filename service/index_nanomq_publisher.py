@@ -1,9 +1,12 @@
 import os
 import json
 import logging
+from datetime import datetime
+from decimal import Decimal
 import paho.mqtt.client as mqtt
-from helper import notifier
 from xtquant import xtdata
+from helper import utils
+
 
 # 配置高性能日志（关掉 DEBUG，只保留警告和错误，节约盘中 I/O）
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,19 +19,78 @@ class IndexMqGateway:
         self.mq_port = mq_port
         self.mq_client = mqtt.Client(client_id="AlphaCore_PyGateway", clean_session=True)
 
-        # 获取我们盘前生成的 JSON 文件路径
+        # 挂载回调函数（收发一体化核心）
+        self.mq_client.on_connect = self._on_mq_connect
+        self.mq_client.on_message = self._on_mq_message
+
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.project_root = os.path.dirname(current_dir)
         self.config_path = os.path.join(self.project_root, 'files', 'alphacore_config.json')
 
         self.subscribe_list = []
 
+        # 🟢 老哥要求的：维护最终指数计算结果的中央字典
+        self.target_index_infos = {}
+
+    def _on_mq_connect(self, client, userdata, flags, rc):
+        """MQTT 连接成功后的钩子"""
+        if rc == 0:
+            print(f"✅ 成功连接到 NanoMQ Broker: {self.mq_host}:{self.mq_port}")
+            # 建立连接后，立刻向 NanoMQ 订阅 Golang 引擎算好的实时指数
+            client.subscribe("alphacore/index/realtime", qos=0)
+            print("📡 [全双工开启] 已挂载接收天线，监听主题: alphacore/index/realtime")
+        else:
+            logger.error(f"❌ 连接 NanoMQ 失败，返回码: {rc}")
+
+    def _on_mq_message(self, client, userdata, msg):
+        """
+        【接收总线】当 Golang 把算好的指数打回来时，触发此回调！
+        注意：这是在 paho-mqtt 的后台异步线程中执行的，绝对不会阻塞 QMT 行情推流。
+        """
+        if msg.topic == "alphacore/index/realtime":
+            try:
+                # 解析 Golang 传过来的 JSON 数组
+                results = json.loads(msg.payload.decode('utf-8'))
+                self._update_target_index_infos(results)
+            except Exception as e:
+                logger.error(f"处理 Golang 实时指数回传时异常: {e}")
+
+    def _update_target_index_infos(self, results):
+        """将 Golang 算出的数据，完美洗入老哥指定的 target_index_infos 字典"""
+        for res in results:
+            code = res.get("i")
+            current_price = res.get("p", 0.0)
+            increase_rate = res.get("r", 0.0)
+            time_ms = res.get("t", 0)
+
+            if not code or time_ms == 0:
+                continue
+
+            pure_code = code
+
+            # 如果字典里还没这个键，先初始化一个空字典
+            if pure_code not in self.target_index_infos:
+                self.target_index_infos[pure_code] = {}
+
+            # 🟢 完美复刻老哥的数据结构
+            self.target_index_infos[pure_code].update({
+                'time': datetime.fromtimestamp(time_ms / 1000).strftime('%H:%M:%S'),
+                'timestamp': time_ms / 1000,
+                'start': 0,
+                'current': round(current_price, 4),
+                # Decimal 需要字符串传参以防浮点数精度丢失
+                'increase_rate': Decimal(str(round(increase_rate, 6))),
+                'status': True,
+            })
+
+
     def connect_mq(self):
         """连接到边缘节点 NanoMQ"""
         try:
+            # 开启 MQTT 的后台异步网络收发线程
+            # loop_start 会在后台接管收发，我们的 _on_mq_message 就是被这个线程驱动的
             self.mq_client.connect(self.mq_host, self.mq_port, keepalive=60)
-            self.mq_client.loop_start()  # 开启 MQTT 的后台异步网络收发线程
-            print(f"✅ 成功连接到 NanoMQ Broker: {self.mq_host}:{self.mq_port}")
+            self.mq_client.loop_start()
         except Exception as e:
             logger.error(f"❌ 连接 NanoMQ 失败，请检查服务是否启动: {e}")
             exit(1)
@@ -52,8 +114,7 @@ class IndexMqGateway:
 
     def on_whole_tick_callback(self, datas):
         """
-        【极限压榨性能：全推批量聚合回调】
-        将同一瞬间推送过来的碎片化 Tick 打包成一个 JSON 数组，单次 I/O 发送！
+        【发送总线】极限压榨性能：全推批量聚合回调
         """
         try:
             batch_payload = []
@@ -61,8 +122,6 @@ class IndexMqGateway:
                 if not tick_data:
                     continue
 
-                # 由于我们取消了按主题区分代码，这里必须把股票代码 "c" 塞进包里供 Golang 识别
-                # p: 最新价, v: 成交量, a: 成交额, t: 时间戳
                 batch_payload.append({
                     "c": stock_code,
                     "p": tick_data.get("lastPrice", 0),
@@ -71,17 +130,14 @@ class IndexMqGateway:
                     "t": tick_data.get("time", 0)
                 })
 
-            # 如果数组不为空，执行【一发入魂】
             if batch_payload:
                 self.mq_client.publish(
-                    topic="alphacore/tick/batch",  # 统一合并到一个总线主题
+                    topic="alphacore/tick/batch",
                     payload=json.dumps(batch_payload),
                     qos=0
                 )
         except Exception as e:
-            # 盘中尽量不要 print，用 logger 记录错误
             logger.error(f"批量打包 Tick 并转发 MQ 时异常: {e}")
-            notifier.send_telegram_alert("报警", f"打包 Tick 并转发 MQ 时异常, on_whole_tick_callback发生错误: {str(e)[:200]},\n请立即处理")
 
     def start_gateway(self):
         """启动网关，接管 QMT 行情并永久阻塞"""
@@ -90,11 +146,13 @@ class IndexMqGateway:
 
         print("🚀 开始向 QMT 内存总线注册【全推批处理】Tick 订阅...")
 
-        # 【核心架构升级】：直接把所有去重代码列表扔进去，建立唯一监听总线
         xtdata.subscribe_whole_quote(
             code_list=self.subscribe_list,
             callback=self.on_whole_tick_callback
         )
 
-        print("⚡ 极速行情网关已全线贯通！正在源源不断地向 NanoMQ 泵入实时聚合数据...")
+        print("⚡ 极速行情网关已全线贯通！发送/接收双引擎全速运转中...")
+        print("🛑 保持此进程存活... (按 Ctrl+C 终止)")
+
+        # 把主线程交给 QMT IPC
         xtdata.run()

@@ -92,6 +92,8 @@ if __name__ == '__main__':
         elif args.mode == '4':
             gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
             gateway.start_gateway()
+            time.sleep(10)
+            logger.info(gateway.target_index_infos)
         else:
             logger.info(f"Unknown execution mode: {args.mode}")
     except Exception as e:
