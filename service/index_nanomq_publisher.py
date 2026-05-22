@@ -42,18 +42,32 @@ class IndexMqGateway:
         else:
             logger.error(f"❌ 连接 NanoMQ 失败，返回码: {rc}")
 
-    def _on_mq_message(self, client, userdata, msg):
-        """
-        【接收总线】当 Golang 把算好的指数打回来时，触发此回调！
-        注意：这是在 paho-mqtt 的后台异步线程中执行的，绝对不会阻塞 QMT 行情推流。
-        """
-        if msg.topic == "alphacore/index/realtime":
-            try:
-                # 解析 Golang 传过来的 JSON 数组
-                results = json.loads(msg.payload.decode('utf-8'))
-                self._update_target_index_infos(results)
-            except Exception as e:
-                logger.error(f"处理 Golang 实时指数回传时异常: {e}")
+    def _on_mq_message(self, client, userdata, message):
+        try:
+            results = json.loads(message.payload.decode('utf-8'))
+
+            compatible_results = []
+            for item in results:
+                etf_code = item.get('i')
+                iopv = item.get('iopv', 0.0)
+                increase_rate = item.get('r', 0.0)  # 🟢 接收 Golang 传来的涨跌幅
+                timestamp = item.get('t', 0)
+
+                # 打印核对（直接在这里格式化为保留 6 位小数）
+                #logger.info(f"✅ [核对] ETF: {etf_code} | 净值: 【 {iopv:.4f} 】 | 涨跌幅: 【 {increase_rate:.6f} 】")
+
+                # 组装传给你原有的字典更新函数
+                compatible_results.append({
+                    "i": etf_code,
+                    "p": iopv,  # p 存净值
+                    "r": increase_rate,  # r 存涨跌幅
+                    "t": timestamp
+                })
+
+            self._update_target_index_infos(compatible_results)
+
+        except Exception as e:
+            logger.error(f"处理 Golang 结果异常: {e}")
 
     def _update_target_index_infos(self, results):
         """将 Golang 算出的数据，完美洗入老哥指定的 target_index_infos 字典"""
@@ -154,5 +168,3 @@ class IndexMqGateway:
         print("⚡ 极速行情网关已全线贯通！发送/接收双引擎全速运转中...")
         print("🛑 保持此进程存活... (按 Ctrl+C 终止)")
 
-        # 把主线程交给 QMT IPC
-        xtdata.run()

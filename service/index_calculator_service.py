@@ -39,43 +39,63 @@ class IndexReplicationCalculator:
             return f"{code_str}.BJ"
         return code_str
 
-    def _safe_batch_download(self, stock_list, period, start_time, end_time, batch_size=300):
+    def _ensure_history_data(self, stock_list, period, start_time, end_time, max_retries=15):
         """
-        【核弹级修复】彻底抛弃官方充满 Bug 的 download_history_data2
-        使用单针异步连续发射 + IPC 限流，绝对防挂死！
+        【神级对齐】带智能校验的强同步下载器，杜绝任何一只股票市值丢失！
         """
-        total = len(stock_list)
-        if total == 0:
-            return
+        missing_stocks = set(stock_list)
 
-        logger.info(f"⏬启动【单针异步限流】模式下载 {total} 只标的...")
+        logger.info(f"⏬ 开始校验并拉取 {len(missing_stocks)} 只标的的 {period} 行情...")
 
-        # 随意定义一个哑巴回调函数，用于强制激活底层的非阻塞模式
-        def dummy_callback(data):
-            pass
+        for attempt in range(max_retries):
+            if not missing_stocks:
+                break
 
-        for i, qmt_code in enumerate(stock_list):
-            try:
-                # 【核心魔法】：使用单体下载接口 download_history_data (没有2)
-                # 配合 callback，Python 线程发射完指令瞬间放行，绝不回头看！
-                xtdata.download_history_data(
-                    stock_code=qmt_code,
-                    period=period,
-                    start_time=start_time,
-                    end_time=end_time,
-                    callback=dummy_callback
-                )
-            except Exception:
+            # 1. 尝试从本地提取 (坚决用 'front' 前复权维持市值守恒！)
+            market_data = xtdata.get_market_data_ex(
+                field_list=['close'],
+                stock_list=list(missing_stocks),
+                period=period,
+                start_time=start_time,
+                end_time=end_time,
+                dividend_type='front'
+            )
+
+            # 2. 检查哪些没拿到
+            still_missing = set()
+            for code in missing_stocks:
+                # 判断条件：没有这个键，或者为空 (说明数据还没下完落盘)
+                if code not in market_data or market_data[code].empty:
+                    still_missing.add(code)
+
+            if not still_missing:
+                logger.info("✅ 所有标的历史数据已 100% 落盘，完美就绪！")
+                # 🟢 【Bug Fix】跳出前清空集合，防止外层误报 ERROR
+                missing_stocks = set()
+                break
+
+            missing_stocks = still_missing
+            logger.warning(f"⏳ 第 {attempt + 1} 次校验: 尚有 {len(missing_stocks)} 只标的未就绪，正在补漏拉取...")
+
+            # 3. 仅对缺失的股票发射异步下载指令
+            def dummy_cb(data):
                 pass
 
-            # 【限流阀门】：每发射 200 个指令，强制让 Python 暂停 0.1 秒
-            # 防止 4000 个高频并发瞬间把 QMT 的 C++ 进程内存通道撑爆
-            if (i + 1) % 200 == 0:
-                time.sleep(0.1)
+            for i, qmt_code in enumerate(missing_stocks):
+                try:
+                    xtdata.download_history_data(qmt_code, period, start_time, end_time, dummy_cb)
+                except Exception:
+                    pass
+                # 稍微限流，防止 QMT 底层 C++ 拥堵
+                if (i + 1) % 200 == 0:
+                    time.sleep(0.1)
 
-        # 指令已经全部瞬间发给 C++ 了，我们在外部统一让 Python 等待 5 秒
-        # 给底层 C++ 一点默默把数据写进本地硬盘的时间
-        logger.info(f"⏳ {total} 异步下载指令已全部投递完毕")
+            # 4. 强制等待 3 秒，给 C++ 写入本地缓存的时间，然后进入下一轮校验循环
+            time.sleep(3.0)
+
+        if missing_stocks:
+            logger.error(
+                f"⚠️ 警告！历经 {max_retries} 次重试，仍有 {len(missing_stocks)} 只股票(如 {list(missing_stocks)[:5]}) 无法获取数据，请检查是否退市！")
 
     def _load_dataframe(self, file_path):
         """统一且健壮的装甲加载器"""
@@ -183,15 +203,12 @@ class IndexReplicationCalculator:
             db_date = f"{base_date_str[:4]}-{base_date_str[4:6]}-{base_date_str[6:]}"
 
             # 【替换点 1】：洗盘计算时，如果遇到超大宽基(如中证1000/2000)，也使用安全分批下载
-            self._safe_batch_download(
+            self._ensure_history_data(
                 stock_list=qmt_stock_list,
                 period='1d',
                 start_time=start_search_date_str,
-                end_time=base_date_str,
-                batch_size=100
+                end_time=base_date_str
             )
-            logger.info("强制等待 2 秒让底层数据落盘...")
-            time.sleep(2.0)
 
             # 注意：get_market_data_ex 是从本地硬盘/内存读取，不走网络，不存在并发死锁问题，无需分批
             market_data = xtdata.get_market_data_ex(
@@ -294,12 +311,11 @@ class IndexReplicationCalculator:
         start_yest_str = start_yest_dt.strftime('%Y%m%d')
 
         # 【替换点 2】：全市场去重后几千只股票的终极大关卡！启用分批下载，彻底告别死锁！
-        self._safe_batch_download(
+        self._ensure_history_data(
             stock_list=subscribe_list,
             period='1d',
             start_time=start_yest_str,
-            end_time=qmt_yesterday,
-            batch_size=100
+            end_time=qmt_yesterday
         )
         logger.info("强制等待 5 秒让底层数据落盘...")
         time.sleep(5.0)
