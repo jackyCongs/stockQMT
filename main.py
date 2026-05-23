@@ -9,7 +9,7 @@ from db.db_pool import DBPool
 from service.stock_service import StockService
 from service.trader_service import TraderService
 from service.trans_flows import TransFlows
-from service.index_snapshot_service import IndexSnapshotSynchronizer
+from service.etf_alphacore_config_service import ETFAlphaCoreConfigService
 from service.index_calculator_service import IndexReplicationCalculator
 from service.index_nanomq_publisher import IndexMqGateway
 from strategies.strategy1 import Strategy1
@@ -80,7 +80,9 @@ if __name__ == '__main__':
         elif args.mode == '3':
             # 第一阶段：智能同步最新权重文件
             logger.info(">>> 阶段一：执行权重文件同步...")
-            IndexSnapshotSynchronizer(db).sync_latest_weights()
+            ETFAlphaCoreConfigService(db).run(['530100', '159810'])
+
+            exit()
 
             # 第二阶段：计算虚拟股数并强制对齐入库
             logger.info(">>> 阶段二：提取复权基准、计算虚拟股数并入库...")
