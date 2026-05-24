@@ -11,6 +11,7 @@ from xtquant import xtdata
 import time
 from db import index_daily_history
 from db import stock as stock_db
+from helper import utils
 
 # 强制 stdout/stderr 使用 utf-8 编码以防 Windows 终端在打印中文字符或 Emoji 时报错
 if hasattr(sys.stdout, 'reconfigure'):
@@ -42,6 +43,9 @@ class ETFAlphaCoreConfigService:
             return
         self.initialized = True
         self._szse_pcf_cache = {}
+        self._pcf_info_cache = {}
+        self._pcf_comp_cache = {}
+        self.pcf_fetch_failures = []
         self.db = db
         self.yesterday_date = yesterday_date
         
@@ -101,14 +105,11 @@ class ETFAlphaCoreConfigService:
             def dummy_cb(data):
                 pass
                 
-            for i, qmt_code in enumerate(missing_stocks):
-                try:
-                    xtdata.download_history_data(qmt_code, period, start_time, end_time, dummy_cb)
-                except Exception:
-                    pass
-                if (i + 1) % 200 == 0:
-                    time.sleep(0.1)
-                    
+            try:
+                xtdata.download_history_data2(list(missing_stocks), period, start_time, end_time, dummy_cb)
+            except Exception as e:
+                print(f"  ❌ 调用批量下载失败: {e}")
+                
             time.sleep(3.0)
             
         if missing_stocks:
@@ -212,28 +213,60 @@ class ETFAlphaCoreConfigService:
             return self._szse_pcf_cache[fund_code]
             
         now = datetime.datetime.now()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+        today_str = now.strftime("%Y%m%d")
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pcf_dir = os.path.join(project_root, "files", "pcf", today_str)
+        os.makedirs(pcf_dir, exist_ok=True)
         
         content = None
         success_date_str = None
-        for i in range(5):
-            date_str = (now - datetime.timedelta(days=i)).strftime("%Y%m%d")
-            url = f"https://reportdocs.static.szse.cn/files/text/etf/ETF{fund_code}{date_str}.txt?random={random.random()}"
+        
+        # 1. 尝试从本地缓存读取
+        import glob
+        cache_files = glob.glob(os.path.join(pcf_dir, f"SZSE_{fund_code}_*.txt"))
+        if cache_files:
+            cache_file = cache_files[0]
             try:
-                resp = requests.get(url, headers=headers, timeout=10)
-                if resp.status_code == 200:
-                    encoding = resp.apparent_encoding or 'gbk'
-                    content = resp.content.decode(encoding, errors='ignore')
-                    success_date_str = date_str
-                    print(f"成功获取深交所 ETF {fund_code} {date_str} 申赎清单数据")
-                    break
-            except Exception:
-                continue
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                filename = os.path.basename(cache_file)
+                success_date_str = filename.replace(f"SZSE_{fund_code}_", "").replace(".txt", "")
+                print(f"  📖 [缓存读取] 成功读取本地深交所 ETF {fund_code} {success_date_str} 申赎清单数据")
+            except Exception as e:
+                print(f"  ❌ 读取本地缓存失败: {e}")
+                content = None
+                success_date_str = None
+
+        # 2. 如果没有缓存，则从网络获取并写入缓存
+        if not content:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            for i in range(5):
+                date_str = (now - datetime.timedelta(days=i)).strftime("%Y%m%d")
+                url = f"https://reportdocs.static.szse.cn/files/text/etf/ETF{fund_code}{date_str}.txt?random={random.random()}"
+                try:
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        encoding = resp.apparent_encoding or 'gbk'
+                        content = resp.content.decode(encoding, errors='ignore')
+                        success_date_str = date_str
+                        print(f"  🌐 [网络拉取] 成功获取深交所 ETF {fund_code} {date_str} 申赎清单数据")
+
+                        # 存入本地文件
+                        cache_file = os.path.join(pcf_dir, f"SZSE_{fund_code}_{success_date_str}.txt")
+                        try:
+                            with open(cache_file, "w", encoding="utf-8") as f:
+                                f.write(content)
+                        except Exception as e:
+                            print(f"  ❌ 写入本地缓存失败: {e}")
+                        break
+                except Exception:
+                    continue
                 
         if not content:
             print(f"获取深交所 ETF {fund_code} 申赎清单数据失败")
+            self.pcf_fetch_failures.append((fund_code, "深交所PCF清单数据拉取失败（连续5天尝试均无数据或网络异常）"))
             return None
             
         metadata, components = self.parse_szse_etf_txt(content)
@@ -244,6 +277,20 @@ class ETFAlphaCoreConfigService:
 
     def get_sse_pcf_basic_info(self, fund_code: str) -> dict | None:
         """获取上交所 ETF 申赎清单基本信息"""
+        today_str = datetime.datetime.now().strftime("%Y%m%d")
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pcf_dir = os.path.join(project_root, "files", "pcf", today_str)
+        os.makedirs(pcf_dir, exist_ok=True)
+        cache_file = os.path.join(pcf_dir, f"SSE_{fund_code}_basic.json")
+        
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    print(f"  📖 [缓存读取] 成功读取本地上交所 ETF {fund_code} 基本信息")
+                    return json.load(f)
+            except Exception:
+                pass
+                
         url = "https://query.sse.com.cn/commonQuery.do"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -259,14 +306,38 @@ class ETFAlphaCoreConfigService:
             resp.raise_for_status()
             data = resp.json()
             if data and data.get("result") and len(data["result"]) > 0:
-                return data["result"][0]
+                result_data = data["result"][0]
+                print(f"  🌐 [网络拉取] 成功获取上交所 ETF {fund_code} 基本信息")
+                try:
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump(result_data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                return result_data
+            self.pcf_fetch_failures.append((fund_code, "上交所PCF基本信息接口返回空数据"))
             return None
         except Exception as e:
             print(f"获取上交所PCF基本信息失败: {e}")
+            self.pcf_fetch_failures.append((fund_code, f"上交所PCF基本信息请求异常: {e}"))
             return None
 
     def get_sse_pcf_components(self, fund_code: str) -> pd.DataFrame | None:
         """获取上交所 ETF 申赎清单成分股列表"""
+        today_str = datetime.datetime.now().strftime("%Y%m%d")
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pcf_dir = os.path.join(project_root, "files", "pcf", today_str)
+        os.makedirs(pcf_dir, exist_ok=True)
+        cache_file = os.path.join(pcf_dir, f"SSE_{fund_code}_comp.json")
+        
+        result_list = None
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    result_list = json.load(f)
+                    print(f"  📖 [缓存读取] 成功读取本地上交所 ETF {fund_code} 成分股")
+            except Exception:
+                pass
+                
         url = "https://query.sse.com.cn/commonQuery.do"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -277,28 +348,45 @@ class ETFAlphaCoreConfigService:
             "FUNDID2": fund_code,
             "sqlId": "COMMON_SSE_CP_JJLB_ETFJJGK_GGSGSHQD_COMPONENT_C",
         }
-        try:
-            resp = requests.get(url, headers=headers, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if data and data.get("result") and len(data["result"]) > 0:
-                df = pd.DataFrame(data["result"])
-                
-                # 清洗上交所特定的申购替代金额 (SUBSTITUTION_CASH_AMOUNT) 并映射为 '申购替代金额' 列
-                def clean_sse_sub_amount(val):
-                    if not val or str(val).strip() == '-':
-                        return '0'
-                    return str(val).replace(',', '').strip()
-                    
-                if 'SUBSTITUTION_CASH_AMOUNT' in df.columns:
-                    df['申购替代金额'] = df['SUBSTITUTION_CASH_AMOUNT'].apply(clean_sse_sub_amount)
+        
+        if result_list is None:
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                if data and data.get("result") and len(data["result"]) > 0:
+                    result_list = data["result"]
+                    print(f"  🌐 [网络拉取] 成功获取上交所 ETF {fund_code} 成分股")
+                    try:
+                        with open(cache_file, "w", encoding="utf-8") as f:
+                            json.dump(result_list, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
                 else:
-                    df['申购替代金额'] = '0'
-                    
-                return df
-            return None
+                    self.pcf_fetch_failures.append((fund_code, "上交所PCF成分股接口返回空数据"))
+                    return None
+            except Exception as e:
+                print(f"获取上交所PCF成分股失败: {e}")
+                self.pcf_fetch_failures.append((fund_code, f"上交所PCF成分股请求异常: {e}"))
+                return None
+                
+        try:
+            df = pd.DataFrame(result_list)
+            
+            # 清洗上交所特定的申购替代金额 (SUBSTITUTION_CASH_AMOUNT) 并映射为 '申购替代金额' 列
+            def clean_sse_sub_amount(val):
+                if not val or str(val).strip() == '-':
+                    return '0'
+                return str(val).replace(',', '').strip()
+                
+            if 'SUBSTITUTION_CASH_AMOUNT' in df.columns:
+                df['申购替代金额'] = df['SUBSTITUTION_CASH_AMOUNT'].apply(clean_sse_sub_amount)
+            else:
+                df['申购替代金额'] = '0'
+                
+            return df
         except Exception as e:
-            print(f"获取上交所PCF成分股失败: {e}")
+            print(f"解析上交所PCF成分股失败: {e}")
             return None
 
     def get_szse_pcf_basic_info(self, fund_code: str) -> dict | None:
@@ -367,18 +455,26 @@ class ETFAlphaCoreConfigService:
         else:
             return self.get_sse_pcf_components(fund_code)
 
-    def generate_config(self, fund_code: str):
+    def generate_config(self, fund_code: str, current_idx: int = 0, total_count: int = 0):
         """
         从 PCF 申赎清单生成 alphacore_config.json 配置
         """
         print("=" * 70)
-        print(f"  生成 {fund_code} alphacore 配置")
+        progress_str = f" 【{current_idx}/{total_count}】" if total_count > 0 else ""
+        print(f"  生成 {fund_code} alphacore 配置{progress_str}")
         print("=" * 70)
 
         # ---- 1. 获取 PCF 成分股 ----
         print("\n[1/4] 获取 PCF 申赎清单...")
-        info = self.get_pcf_basic_info(fund_code)
-        comp_df = self.get_pcf_components(fund_code)
+        if fund_code in self._pcf_info_cache:
+            info = self._pcf_info_cache[fund_code]
+        else:
+            info = self.get_pcf_basic_info(fund_code)
+            
+        if fund_code in self._pcf_comp_cache:
+            comp_df = self._pcf_comp_cache[fund_code]
+        else:
+            comp_df = self.get_pcf_components(fund_code)
 
         if comp_df is None or comp_df.empty:
             print("  ❌ 获取 PCF 成分股失败，终止")
@@ -395,12 +491,13 @@ class ETFAlphaCoreConfigService:
         hk_stocks = []
         for _, row in physical_df.iterrows():
             raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
-            
+
             # 港股处理：如果原代码刚好是 5 位数字，说明是港股通标的
             if len(raw_code) == 5 and raw_code.isdigit():
                 code = raw_code
                 suffix = ".HK"
                 hk_stocks.append(f"{code}{suffix}")
+                stock_code = f"{code}{suffix}"
             else:
                 code = raw_code.zfill(6)
                 # 优先使用股票代码前缀进行硬性判断，防止 PCF 数据错误或缺失
@@ -414,8 +511,7 @@ class ETFAlphaCoreConfigService:
                     market = str(row.get("UNDERLYION_SECURITY_ID", "101"))
                     market_suffix = {"101": ".SH", "102": ".SZ", "106": ".BJ", "103": ".HK"}
                     suffix = market_suffix.get(market, ".SH")
-                
-            stock_code = f"{code}{suffix}"
+                stock_code = utils.enhance_stock_code(raw_code.zfill(6))
             quantity = int(row["QUANTITY"])
             components[stock_code] = quantity
 
@@ -437,12 +533,6 @@ class ETFAlphaCoreConfigService:
         # 为了提高效率，我们分两阶段获取数据：
         # 第一阶段：先全部只拉取昨天的 1d 数据
         try:
-            self._ensure_history_data(
-                stock_list=stock_list,
-                period='1d',
-                start_time=qmt_yesterday,
-                end_time=qmt_yesterday
-            )
             market_data = xtdata.get_market_data_ex(
                 field_list=['close'],
                 stock_list=stock_list,
@@ -678,6 +768,7 @@ class ETFAlphaCoreConfigService:
             print(GREEN + "======================================================================" + RESET)
 
     def run(self):
+        self.pcf_fetch_failures = []
         fund_codes = []
 
         stocks = stock_db.get_stock_list(self.db, 'etf')
@@ -690,13 +781,50 @@ class ETFAlphaCoreConfigService:
             return
             
         print("\n" + "=" * 70)
+        print(f"  [预处理] 汇总所有 ETF 成分股并进行预下载...")
+        print("=" * 70)
+        
+        all_required_stocks = set()
+        self._pcf_info_cache = {}
+        self._pcf_comp_cache = {}
+        
+        for fund_code in fund_codes:
+            info = self.get_pcf_basic_info(fund_code)
+            comp_df = self.get_pcf_components(fund_code)
+            self._pcf_info_cache[fund_code] = info
+            self._pcf_comp_cache[fund_code] = comp_df
+            
+            if comp_df is not None and not comp_df.empty:
+                physical_df = comp_df[comp_df["SUBSTITUTION_FLAG"] != "2"]
+                for _, row in physical_df.iterrows():
+                    raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
+                    if len(raw_code) == 5 and raw_code.isdigit():
+                        continue
+                    else:
+                        code = raw_code.zfill(6)
+                        all_required_stocks.add(utils.enhance_stock_code(code))
+
+        if all_required_stocks:
+            qmt_yesterday = self.yesterday_date.replace('-', '')
+            print(f"  ⏬ 共提取到 {len(all_required_stocks)} 只唯一标的，开始批量预下载 {qmt_yesterday} 数据...")
+            def dummy_cb(data):
+                pass
+            try:
+                xtdata.download_history_data2(list(all_required_stocks), '1d', qmt_yesterday, qmt_yesterday, dummy_cb)
+                print(f"  ✅ 预下载完成！等待 5 秒落盘...")
+                time.sleep(5.0)
+            except Exception as e:
+                print(f"  ❌ 批量预下载调用失败: {e}")
+
+        print("\n" + "=" * 70)
         print(f"  开始批量生成 ETF 配置，共计 {len(fund_codes)} 个基金")
         print("=" * 70)
         
         skipped_hk_etfs = {}
-        for fund_code in fund_codes:
+        total_funds = len(fund_codes)
+        for i, fund_code in enumerate(fund_codes):
             try:
-                res = self.generate_config(fund_code)
+                res = self.generate_config(fund_code, current_idx=i+1, total_count=total_funds)
                 if res and res.get("skipped"):
                     skipped_hk_etfs[fund_code] = res.get("hk_stocks", [])
             except Exception as e:
@@ -718,4 +846,16 @@ class ETFAlphaCoreConfigService:
                 for i in range(0, len(hks), 10):
                     print(CYAN + f"       {', '.join(hks[i:i+10])}" + RESET)
             print(YELLOW + "======================================================================\n" + RESET)
+
+        if getattr(self, 'pcf_fetch_failures', None):
+            YELLOW = "\033[1;33m"
+            RED = "\033[1;31m"
+            RESET = "\033[0m"
+            BOLD = "\033[1m"
+            print("\n" + RED + "🚨" * 35 + RESET)
+            print(RED + "🚨" + " " * 15 + BOLD + "【 人工介入警告：部分 PCF 拉取失败 】" + " " * 16 + "🚨" + RESET)
+            print(RED + "🚨" * 35 + RESET)
+            for fund, reason in self.pcf_fetch_failures:
+                print(YELLOW + f"  👉 基金 [{fund}] : {reason}" + RESET)
+            print(RED + "🚨" * 35 + "\n" + RESET)
 

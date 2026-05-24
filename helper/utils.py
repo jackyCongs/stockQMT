@@ -39,6 +39,8 @@ def enhance_stock_code(code, type='stock', ignore_warning = False):
     elif len(code) == 6 and (code.startswith('0') or code.startswith('3') or code.startswith('158')
                              or code.startswith('159') or code.startswith('16')):
         return f"{code}.SZ"
+    elif len(code) == 6 and code.startswith(('8', '4', '92', '93')):
+        return f"{code}.BJ"
     logger.warning(f"当前 code: {code}-{type}, 无对应来源")
     return code
 
