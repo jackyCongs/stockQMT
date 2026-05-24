@@ -8,6 +8,9 @@ import threading
 import pandas as pd
 import requests
 from xtquant import xtdata
+import time
+from db import index_daily_history
+from db import stock as stock_db
 
 # 强制 stdout/stderr 使用 utf-8 编码以防 Windows 终端在打印中文字符或 Emoji 时报错
 if hasattr(sys.stdout, 'reconfigure'):
@@ -33,13 +36,14 @@ class ETFAlphaCoreConfigService:
                 cls._instance = super(ETFAlphaCoreConfigService, cls).__new__(cls)
             return cls._instance
 
-    def __init__(self, db):
-        # 防止重复初始化
+    def __init__(self, db, yesterday_date):
+        self.etf_target_index_map = None
         if hasattr(self, 'initialized'):
             return
         self.initialized = True
         self._szse_pcf_cache = {}
         self.db = db
+        self.yesterday_date = yesterday_date
         
         # 默认配置文件路径
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +58,61 @@ class ETFAlphaCoreConfigService:
             return float(val)
         except ValueError:
             return 0.0
+
+    def _ensure_history_data(self, stock_list, period, start_time, end_time, max_retries=5):
+        """同步下载器，确保所有股票的数据在本地缓存"""
+        missing_stocks = set(stock_list)
+        print(f"  ⏬ 开始校验并拉取 {len(missing_stocks)} 只标的的 {period} 行情...")
+        
+        for attempt in range(max_retries):
+            if not missing_stocks:
+                break
+                
+            market_data = xtdata.get_market_data_ex(
+                field_list=['close'],
+                stock_list=list(missing_stocks),
+                period=period,
+                start_time=start_time,
+                end_time=end_time,
+                dividend_type='front'
+            )
+            
+            still_missing = set()
+            for code in missing_stocks:
+                if code not in market_data or market_data[code].empty:
+                    still_missing.add(code)
+                else:
+                    df_px = market_data[code]
+                    if 'close' in df_px.columns:
+                        valid_closes = df_px[pd.notna(df_px['close'])]
+                        if valid_closes.empty:
+                            still_missing.add(code)
+                    else:
+                        still_missing.add(code)
+                    
+            if not still_missing:
+                print("  ✅ 所有标的历史数据已 100% 落盘就绪！")
+                missing_stocks = set()
+                break
+                
+            missing_stocks = still_missing
+            print(f"  ⏳ 第 {attempt + 1} 次校验: 尚有 {len(missing_stocks)} 只标的未就绪，正在拉取...")
+            
+            def dummy_cb(data):
+                pass
+                
+            for i, qmt_code in enumerate(missing_stocks):
+                try:
+                    xtdata.download_history_data(qmt_code, period, start_time, end_time, dummy_cb)
+                except Exception:
+                    pass
+                if (i + 1) % 200 == 0:
+                    time.sleep(0.1)
+                    
+            time.sleep(3.0)
+            
+        if missing_stocks:
+            print(f"  ⚠️ 警告: 有 {len(missing_stocks)} 只股票(如 {list(missing_stocks)[:5]}) 无法获取数据，可能退市或停牌！")
 
     def get_market_by_stock_code(self, code: str) -> str:
         """根据证券代码前缀自动识别其所属市场 ID"""
@@ -308,7 +367,7 @@ class ETFAlphaCoreConfigService:
         else:
             return self.get_sse_pcf_components(fund_code)
 
-    def generate_config(self, fund_code: str, config_path: str = None):
+    def generate_config(self, fund_code: str):
         """
         从 PCF 申赎清单生成 alphacore_config.json 配置
         """
@@ -319,7 +378,6 @@ class ETFAlphaCoreConfigService:
         # ---- 1. 获取 PCF 成分股 ----
         print("\n[1/4] 获取 PCF 申赎清单...")
         info = self.get_pcf_basic_info(fund_code)
-        print(info)
         comp_df = self.get_pcf_components(fund_code)
 
         if comp_df is None or comp_df.empty:
@@ -333,94 +391,158 @@ class ETFAlphaCoreConfigService:
         print(f"  物理股票: {len(physical_df)}  (现金替代=允许)")
         print(f"  现金替代: {len(cash_only_df)}  (现金替代=必须，已排除)")
 
-        # 构建 components 字典: { "600006.SH": 900, ... }
-        market_suffix = {"101": ".SH", "102": ".SZ", "106": ".BJ"}
         components = {}
+        hk_stocks = []
         for _, row in physical_df.iterrows():
-            code = str(row["INSTRUMENT_ID"])
-            market = str(row.get("UNDERLYION_SECURITY_ID", "101"))
-            suffix = market_suffix.get(market, ".SH")
+            raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
+            
+            # 港股处理：如果原代码刚好是 5 位数字，说明是港股通标的
+            if len(raw_code) == 5 and raw_code.isdigit():
+                code = raw_code
+                suffix = ".HK"
+                hk_stocks.append(f"{code}{suffix}")
+            else:
+                code = raw_code.zfill(6)
+                # 优先使用股票代码前缀进行硬性判断，防止 PCF 数据错误或缺失
+                if code.startswith(('60', '68', '51', '56', '58')):
+                    suffix = ".SH"
+                elif code.startswith(('00', '30', '15')):
+                    suffix = ".SZ"
+                elif code.startswith(('8', '4', '92', '93')):
+                    suffix = ".BJ"
+                else:
+                    market = str(row.get("UNDERLYION_SECURITY_ID", "101"))
+                    market_suffix = {"101": ".SH", "102": ".SZ", "106": ".BJ", "103": ".HK"}
+                    suffix = market_suffix.get(market, ".SH")
+                
             stock_code = f"{code}{suffix}"
             quantity = int(row["QUANTITY"])
             components[stock_code] = quantity
 
         print(f"  components 构建完成: {len(components)} 只股票")
 
+        if hk_stocks:
+            print(f"  🚫 发现 {len(hk_stocks)} 只港股成分股，当前配置系统暂不生成该 ETF。")
+            return {"skipped": True, "hk_stocks": hk_stocks}
+
         # ---- 2. 获取昨收价，计算 basket_pre_close ----
         print("\n[2/4] 获取昨收价并计算 basket_pre_close...")
         basket_pre_close = 0.0
         missing_count = 0
         stock_list = list(components.keys())
-        # 触发 QMT 异步下载所有成分股 of the K-lines
+        market_data = {}
+        
+        qmt_yesterday = self.yesterday_date.replace('-', '')
+        
+        # 为了提高效率，我们分两阶段获取数据：
+        # 第一阶段：先全部只拉取昨天的 1d 数据
         try:
-            print(f"  正在请求 QMT 异步下载 {len(stock_list)} 只成分股的日 K 线历史数据...")
-            # 扩展下载历史天数至 60 天，确保停牌时间较长时也能覆盖到
-            start_date = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y%m%d")
-            xtdata.download_history_data2(stock_list=stock_list, period='1d', start_time=start_date)
+            self._ensure_history_data(
+                stock_list=stock_list,
+                period='1d',
+                start_time=qmt_yesterday,
+                end_time=qmt_yesterday
+            )
+            market_data = xtdata.get_market_data_ex(
+                field_list=['close'],
+                stock_list=stock_list,
+                period='1d',
+                start_time=qmt_yesterday,
+                end_time=qmt_yesterday,
+                dividend_type='front'
+            )
         except Exception as e:
-            print(f"  ⚠ 触发历史数据下载失败: {e}")
+            print(f"  ❌ 第一阶段调用 QMT xtdata.get_market_data_ex 失败: {e}")
 
-        close_df = None
-        try:
-            # 使用 count=30 调取过去 30 个交易日数据，以便在停牌时能够往前找最后一次的收盘价
-            market_data = xtdata.get_market_data(field_list=['close'], stock_list=stock_list, period='1d', count=30)
-            if market_data and 'close' in market_data:
-                close_df = market_data['close']
-        except Exception as e:
-            print(f"  ❌ 调用 QMT xtdata.get_market_data 失败: {e}")
+        missing_stocks_info = []
+        stock_last_close = {}
 
-        for stock_code, qty in components.items():
+        # 尝试提取第一阶段的收盘价
+        for stock_code in stock_list:
             last_close = 0.0
-            if close_df is not None and stock_code in close_df.index:
+            if stock_code in market_data and not market_data[stock_code].empty:
                 try:
-                    row = close_df.loc[stock_code]
-                    # 提取非空的最接近的值作为最近的收盘价
-                    valid_closes = row.dropna()
-                    if not valid_closes.empty:
-                        last_close = float(valid_closes.iloc[-1])
+                    df_px = market_data[stock_code]
+                    if 'close' in df_px.columns:
+                        valid_closes = df_px[pd.notna(df_px['close'])]
+                        if not valid_closes.empty:
+                            last_close = float(valid_closes['close'].iloc[-1])
                 except Exception:
                     pass
-                    
+            stock_last_close[stock_code] = last_close
+            if last_close <= 0:
+                missing_stocks_info.append(stock_code)
+
+        # 第二阶段：如果仍有股票没有昨收价（大概率为停牌），则针对这些股票拉取 60 天的数据回溯
+        if missing_stocks_info:
+            print(f"  ⏳ 针对 {len(missing_stocks_info)} 只停牌或无数据股票启动 60 天深度回溯...")
+            yesterday_dt = datetime.datetime.strptime(qmt_yesterday, '%Y%m%d')
+            start_dt = yesterday_dt - datetime.timedelta(days=60)
+            qmt_start_date = start_dt.strftime('%Y%m%d')
+
+            try:
+                self._ensure_history_data(
+                    stock_list=missing_stocks_info,
+                    period='1d',
+                    start_time=qmt_start_date,
+                    end_time=qmt_yesterday
+                )
+                fallback_market_data = xtdata.get_market_data_ex(
+                    field_list=['close'],
+                    stock_list=missing_stocks_info,
+                    period='1d',
+                    start_time=qmt_start_date,
+                    end_time=qmt_yesterday,
+                    dividend_type='front'
+                )
+                
+                # 重新提取这部分股票的价格
+                for stock_code in missing_stocks_info:
+                    if stock_code in fallback_market_data and not fallback_market_data[stock_code].empty:
+                        try:
+                            df_px = fallback_market_data[stock_code]
+                            if 'close' in df_px.columns:
+                                valid_closes = df_px[pd.notna(df_px['close'])]
+                                if not valid_closes.empty:
+                                    stock_last_close[stock_code] = float(valid_closes['close'].iloc[-1])
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"  ❌ 第二阶段调用 QMT xtdata.get_market_data_ex 失败: {e}")
+
+        # 汇总最终的价格进行累加
+        missing_count = 0
+        final_missing_stocks = []
+        for stock_code, qty in components.items():
+            last_close = stock_last_close.get(stock_code, 0.0)
             if last_close > 0:
                 basket_pre_close += last_close * qty
             else:
                 missing_count += 1
+                final_missing_stocks.append(stock_code)
 
         if missing_count > 0:
-            print(f"  ⚠ 有 {missing_count} 只股票未找到昨收价")
+            print(f"  ⚠ 有 {missing_count} 只股票未找到昨收价 (例如: {', '.join(final_missing_stocks[:5])})")
         basket_pre_close = round(basket_pre_close, 2)
         print(f"  basket_pre_close = {basket_pre_close}")
 
         # ---- 3. 获取指数昨收 ----
         print("\n[3/4] 获取指数昨收...")
+        index_code = 0
         index_pre_close = 0.0
-        # 优先获取 ETF 的目标指数代码，若不存在则默认使用上证580指数 950580.SH
-        index_code = info.get("目标指数代码", "950580") if info else "950580"
-        if "." not in index_code:
-            if index_code.startswith("399"):
-                index_code = f"{index_code}.SZ"
-            else:
-                index_code = f"{index_code}.SH"
-                
-        print(f"  查询指数代码: {index_code}")
-        
-        # 触发 QMT 同步下载指数日线历史行情数据，确保本地缓存中存在昨收价
-        try:
-            # 扩展指数下载范围至 60 天
-            start_date = (datetime.datetime.now() - datetime.timedelta(days=60)).strftime("%Y%m%d")
-            xtdata.download_history_data(stock_code=index_code, period='1d', start_time=start_date)
-        except Exception as e:
-            print(f"  ⚠ 下载指数历史数据失败: {e}")
+        if self.etf_target_index_map and fund_code in self.etf_target_index_map:
+            index_data = self.etf_target_index_map[fund_code]
+            index_code = index_data["index_code"]
+            index_pre_close = index_data["index_pre_price"]
         
         if index_pre_close > 0:
             print(f"  指数 {index_code} 昨收: {index_pre_close}")
         else:
-            print("  ⚠ 未能获取指数昨收，使用 0.0 占位")
+            print(" ❌️ ⚠ 未能获取指数昨收，使用 0.0 占位")
 
         # ---- 4. 写入配置文件 ----
         print("\n[4/4] 写入配置文件...")
-        if config_path is None:
-            config_path = self.default_config_path
+        config_path = self.default_config_path
 
         estimated_cash = self.clean_float(info.get("ESTIMATED_CASH_COMPONENT", 0.0)) if info else 0.0
         net_asset_value = self.clean_float(info.get("NAV", 0.0)) if info else 0.0
@@ -442,6 +564,7 @@ class ETFAlphaCoreConfigService:
                 pass
 
         config_data[fund_code] = {
+            "index_code": index_code,
             "index_pre_close": index_pre_close,
             "basket_pre_close": basket_pre_close,
             "estimated_cash": estimated_cash,
@@ -458,6 +581,7 @@ class ETFAlphaCoreConfigService:
 
         print(f"  配置已保存到: {config_path}")
         print(f"\n  --- 配置摘要 ---")
+        print(f"  index_code:           {index_code}")
         print(f"  index_pre_close:      {index_pre_close}")
         print(f"  basket_pre_close:     {basket_pre_close}")
         print(f"  estimated_cash:       {estimated_cash}")
@@ -469,6 +593,8 @@ class ETFAlphaCoreConfigService:
         print("\n" + "=" * 70)
         print("  完成")
         print("=" * 70)
+        
+        return {"skipped": False}
 
     def verify_config(self):
         print("\n" + "=" * 70)
@@ -551,12 +677,14 @@ class ETFAlphaCoreConfigService:
             print(GREEN + BOLD + "  ✓ 配置文件校验通过！所有基金日期均为当天，且计算总额与 PCF 原始金额完全一致！" + RESET)
             print(GREEN + "======================================================================" + RESET)
 
-    def run(self, fund_codes: list[str]):
-        """
-        供外部调用的统一入口方法：循环执行每个 ETF 的配置生成，最后统一做一次强校验。
-        :param fund_codes: ETF 代码列表，例如 ["530100", "159810"]
-        :param config_path: 配置文件保存路径，若为 None 则使用 default_config_path
-        """
+    def run(self):
+        fund_codes = []
+
+        stocks = stock_db.get_stock_list(self.db, 'etf')
+        for stock in stocks:
+            fund_codes.append(stock['code'])
+
+        self.etf_target_index_map = index_daily_history.get_etf_target_index_pre_close(self.db, fund_codes, self.yesterday_date)
         if not fund_codes:
             print("  ⚠ 未提供任何 ETF 代码，跳过生成")
             return
@@ -565,12 +693,29 @@ class ETFAlphaCoreConfigService:
         print(f"  开始批量生成 ETF 配置，共计 {len(fund_codes)} 个基金")
         print("=" * 70)
         
+        skipped_hk_etfs = {}
         for fund_code in fund_codes:
             try:
-                self.generate_config(fund_code)
+                res = self.generate_config(fund_code)
+                if res and res.get("skipped"):
+                    skipped_hk_etfs[fund_code] = res.get("hk_stocks", [])
             except Exception as e:
                 print(f"  ❌ 生成 ETF {fund_code} 配置时发生错误: {e}")
                 
         # 统一执行一次强校验
         self.verify_config()
+        
+        if skipped_hk_etfs:
+            YELLOW = "\033[1;33m"
+            CYAN = "\033[1;36m"
+            BOLD = "\033[1m"
+            RESET = "\033[0m"
+            print("\n" + YELLOW + "======================================================================" + RESET)
+            print(YELLOW + BOLD + "  🚫 【特殊情况】以下 ETF 包含港股成分，已跳过配置生成：" + RESET)
+            print(YELLOW + "======================================================================" + RESET)
+            for fund, hks in skipped_hk_etfs.items():
+                print(YELLOW + BOLD + f"  👉 ETF [{fund}] 包含 {len(hks)} 只港股：" + RESET)
+                for i in range(0, len(hks), 10):
+                    print(CYAN + f"       {', '.join(hks[i:i+10])}" + RESET)
+            print(YELLOW + "======================================================================\n" + RESET)
 

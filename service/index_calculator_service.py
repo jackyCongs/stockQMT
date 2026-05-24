@@ -30,12 +30,18 @@ class IndexReplicationCalculator:
     @staticmethod
     def format_component_code(raw_code):
         """【共享工具】成分股(个股)专用 QMT 后缀补全逻辑"""
-        code_str = str(raw_code).strip().split('.')[0].zfill(6)
-        if code_str.startswith('60') or code_str.startswith('68'):
+        raw_str = str(raw_code).strip().split('.')[0]
+        
+        # 港股通股票通常为 5 位数，无需补齐 6 位
+        if len(raw_str) == 5 and raw_str.isdigit():
+            return f"{raw_str}.HK"
+            
+        code_str = raw_str.zfill(6)
+        if code_str.startswith('60') or code_str.startswith('68') or code_str.startswith('51') or code_str.startswith('56') or code_str.startswith('58'):
             return f"{code_str}.SH"
-        elif code_str.startswith('00') or code_str.startswith('30'):
+        elif code_str.startswith('00') or code_str.startswith('30') or code_str.startswith('15'):
             return f"{code_str}.SZ"
-        elif code_str.startswith('8') or code_str.startswith('4') or code_str.startswith('920'):
+        elif code_str.startswith('8') or code_str.startswith('4') or code_str.startswith('92') or code_str.startswith('93'):
             return f"{code_str}.BJ"
         return code_str
 
@@ -67,6 +73,14 @@ class IndexReplicationCalculator:
                 # 判断条件：没有这个键，或者为空 (说明数据还没下完落盘)
                 if code not in market_data or market_data[code].empty:
                     still_missing.add(code)
+                else:
+                    df_px = market_data[code]
+                    if 'close' in df_px.columns:
+                        valid_closes = df_px[pd.notna(df_px['close'])]
+                        if valid_closes.empty:
+                            still_missing.add(code)
+                    else:
+                        still_missing.add(code)
 
             if not still_missing:
                 logger.info("✅ 所有标的历史数据已 100% 落盘，完美就绪！")

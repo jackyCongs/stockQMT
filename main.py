@@ -4,6 +4,8 @@ import time
 import traceback
 import logging
 import argparse
+
+from rich.live import Live
 from xtquant import xtdata
 from db.db_pool import DBPool
 from service.stock_service import StockService
@@ -80,22 +82,20 @@ if __name__ == '__main__':
         elif args.mode == '3':
             # 第一阶段：智能同步最新权重文件
             logger.info(">>> 阶段一：执行权重文件同步...")
-            ETFAlphaCoreConfigService(db).run(['530100', '159810'])
+            yesterday_date = data_loader.get_previous_date()
+            ETFAlphaCoreConfigService(db, yesterday_date).run()
 
             exit()
 
             # 第二阶段：计算虚拟股数并强制对齐入库
             logger.info(">>> 阶段二：提取复权基准、计算虚拟股数并入库...")
             calculator = IndexReplicationCalculator(db_pool=db, base_capital=1000000000)
-            yesterday_date = data_loader.get_previous_date()
             calculator.run_daily_pipeline(yesterday_date)
 
             logger.info("=== [AlphaCore] 盘前流水线全部执行完毕，弹药已上膛 ===")
         elif args.mode == '4':
             gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
             gateway.start_gateway()
-            time.sleep(10)
-            #logger.info(gateway.target_index_infos)
             xtdata.run()
         else:
             logger.info(f"Unknown execution mode: {args.mode}")

@@ -232,3 +232,44 @@ def get_index_pre_close(db_pool, trade_date):
         return {}
     finally:
         conn.close()
+
+def get_etf_target_index_pre_close(db_pool, etf_codes: list, trade_date: str):
+    conn = db_pool.get_connection()
+    if not conn or not etf_codes:
+        return {}
+
+    result_map = {}
+    try:
+        with conn.cursor() as cursor:
+            format_strings = ','.join(['%s'] * len(etf_codes))
+            sql = f"""
+                select s.name as etf_name, s.code as etf_code, i.index_code, i.close_price as index_pre_price 
+                from stock as s 
+                left join index_daily_history as i on s.target_worth_url = i.index_code 
+                where s.code in ({format_strings}) and i.trade_date = %s
+            """
+            params = tuple(etf_codes) + (trade_date,)
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                if isinstance(row, dict):
+                    etf_code = row['etf_code']
+                    index_code = row['index_code']
+                    index_pre_price = row['index_pre_price']
+                else:
+                    etf_code = row[1]
+                    index_code = row[2]
+                    index_pre_price = row[3]
+
+                result_map[str(etf_code)] = {
+                    "index_code": index_code,
+                    "index_pre_price": float(index_pre_price) if index_pre_price is not None else 0.0
+                }
+
+        return result_map
+    except Exception as e:
+        print(f"❌️ 提取 ETF 目标指数昨收点位失败: {e}")
+        return {}
+    finally:
+        conn.close()
