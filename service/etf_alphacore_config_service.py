@@ -78,7 +78,7 @@ class ETFAlphaCoreConfigService:
                 period=period,
                 start_time=start_time,
                 end_time=end_time,
-                dividend_type='front'
+                dividend_type='none'
             )
             
             still_missing = set()
@@ -539,7 +539,7 @@ class ETFAlphaCoreConfigService:
                 period='1d',
                 start_time=qmt_yesterday,
                 end_time=qmt_yesterday,
-                dividend_type='front'
+                dividend_type='none'
             )
         except Exception as e:
             print(f"  ❌ 第一阶段调用 QMT xtdata.get_market_data_ex 失败: {e}")
@@ -583,7 +583,7 @@ class ETFAlphaCoreConfigService:
                     period='1d',
                     start_time=qmt_start_date,
                     end_time=qmt_yesterday,
-                    dividend_type='front'
+                    dividend_type='none'
                 )
                 
                 # 重新提取这部分股票的价格
@@ -660,6 +660,7 @@ class ETFAlphaCoreConfigService:
             "estimated_cash": estimated_cash,
             "net_asset_value": net_asset_value,
             "origin_basket_amount": origin_basket_amount,
+            "hidden_substitute_amount": round(origin_basket_amount-estimated_cash-basket_pre_close, 5),
             "update_date": today_str,
             "components": components,
         }
@@ -677,6 +678,7 @@ class ETFAlphaCoreConfigService:
         print(f"  estimated_cash:       {estimated_cash}")
         print(f"  net_asset_value:      {net_asset_value}")
         print(f"  origin_basket_amount: {origin_basket_amount}")
+        print(f"  hidden_substitute_amount:{origin_basket_amount-estimated_cash-basket_pre_close}")
         print(f"  update_date:          {today_str}")
         print(f"  components:           {len(components)} 只物理股票")
 
@@ -774,6 +776,9 @@ class ETFAlphaCoreConfigService:
         stocks = stock_db.get_stock_list(self.db, 'etf')
         for stock in stocks:
             fund_codes.append(stock['code'])
+
+        # 临时具体看看什么情况
+        # fund_codes = ["515530"]
 
         self.etf_target_index_map = index_daily_history.get_etf_target_index_pre_close(self.db, fund_codes, self.yesterday_date)
         if not fund_codes:
