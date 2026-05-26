@@ -1,10 +1,22 @@
+import sys
 import os
 import json
+import time
 import logging
 from datetime import datetime
 from decimal import Decimal
 import paho.mqtt.client as mqtt
 from xtquant import xtdata
+
+# 注入并导入通达信 TQ 插件路径
+tdx_path = r"D:\stock_software\tongdaxin\PYPlugins\user"
+if tdx_path not in sys.path:
+    sys.path.append(tdx_path)
+
+try:
+    from tqcenter import tq as _tq
+except ImportError:
+    _tq = None
 
 
 # 配置高性能日志（关掉 DEBUG，只保留警告和错误，节约盘中 I/O）
@@ -27,6 +39,7 @@ class IndexMqGateway:
         self.config_path = os.path.join(self.project_root, 'files', 'alphacore_config.json')
 
         self.subscribe_list = []
+        self.bse_subscribe_list = []
         self.real_time_iopv_infos = {}
         self.etf_to_index_code = {}
 
@@ -108,14 +121,20 @@ class IndexMqGateway:
             payload = json.load(f)
 
         all_stocks = set()
+        bse_stocks = set()
         for etf_code, config in payload.items():
             index_code = config.get("index_code", "")
             self.etf_to_index_code[etf_code] = index_code
             for stock_code in config.get("components", {}).keys():
-                all_stocks.add(stock_code)
+                if stock_code.endswith('.BJ'):
+                    bse_stocks.add(stock_code)
+                else:
+                    all_stocks.add(stock_code)
 
         self.subscribe_list = list(all_stocks)
-        print(f"✅ 从配置文件加载完毕，今日需监听成分股总数: {len(self.subscribe_list)} 只")
+        self.bse_subscribe_list = list(bse_stocks)
+        print(f"✅ 从配置文件加载完毕，QMT 订阅成分股: {len(self.subscribe_list)} 只")
+        print(f"✅ 北交所(通达信TQ)订阅成分股: {len(self.bse_subscribe_list)} 只 → {self.bse_subscribe_list}")
 
     def on_whole_tick_callback(self, datas):
         try:
@@ -141,18 +160,67 @@ class IndexMqGateway:
         except Exception as e:
             logger.error(f"批量打包 Tick 并转发 MQ 时异常: {e}")
 
+    def _on_bse_hq_callback(self, data_str):
+        """通达信 TQ 行情更新回调 - 收到推送后获取快照并转发 MQ"""
+        try:
+            code_info = json.loads(data_str)
+            stock_code = code_info.get('Code', '')
+            if not stock_code:
+                return
+
+            if not _tq:
+                logger.error("通达信 TQ SDK 未成功加载！")
+                return
+            snapshot = _tq.get_market_snapshot(stock_code=stock_code, field_list=[])
+            if not snapshot:
+                return
+
+            now_ms = int(time.time() * 1000)
+            batch_payload = [{
+                "c": stock_code,
+                "p": float(snapshot.get("Now", 0)),
+                "v": int(snapshot.get("Volume", 0)),
+                "a": float(snapshot.get("Amount", 0)),
+                "t": now_ms
+            }]
+            self.mq_client.publish(
+                topic="alphacore/tick/batch",
+                payload=json.dumps(batch_payload),
+                qos=0
+            )
+        except Exception as e:
+            logger.error(f"处理北交所 TQ 行情回调异常: {e}")
+
+    def _start_bse_subscription(self):
+        """初始化通达信 TQ 并订阅北交所股票"""
+        if not _tq:
+            raise ImportError("无法载入通达信 tqcenter 模块，请检查通达信是否安装或路径是否正确！")
+        _tq.initialize(__file__)
+        print("✅ 通达信 TQ SDK 初始化完成")
+
+        result = _tq.subscribe_hq(
+            stock_list=self.bse_subscribe_list,
+            callback=self._on_bse_hq_callback
+        )
+        print(f"🏛️ 北交所 TQ 订阅结果: {result}")
+
     def start_gateway(self):
-        """启动网关，接管 QMT 行情并永久阻塞"""
+        """启动网关，接管 QMT + TQ 行情并永久阻塞"""
         self.connect_mq()
         self.load_subscription_list()
 
-        print("🚀 开始向 QMT 内存总线注册【全推批处理】Tick 订阅...")
+        # ① 启动北交所 TQ 行情订阅
+        if self.bse_subscribe_list:
+            self._start_bse_subscription()
 
-        xtdata.subscribe_whole_quote(
-            code_list=self.subscribe_list,
-            callback=self.on_whole_tick_callback
-        )
+        # ② 其余股票走 QMT 全推
+        if self.subscribe_list:
+            print("🚀 开始向 QMT 内存总线注册【全推批处理】Tick 订阅...")
+            xtdata.subscribe_whole_quote(
+                code_list=self.subscribe_list,
+                callback=self.on_whole_tick_callback
+            )
 
-        print("⚡ 极速行情网关已全线贯通！发送/接收双引擎全速运转中...")
+        print("⚡ 极速行情网关已全线贯通！QMT + TQ 双引擎全速运转中...")
         print("🛑 保持此进程存活... (按 Ctrl+C 终止)")
 
