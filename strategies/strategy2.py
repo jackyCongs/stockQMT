@@ -9,7 +9,7 @@ from datetime import datetime
 import helper.data_loader as data_loader
 from service import stock_queue, trader_service as trader_services
 from helper.time_utils import get_datetime, get_time
-from helper import utils, date_utils, notifier, spider
+from helper import utils, date_utils, notifier
 from service.watchdog_service import WatchdogService
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ stock_codes = ['159106.SZ', '159107.SZ', '159108.SZ', '159122.SZ', '159123.SZ', 
 print_count_index = 0
 rest_index_push_count = 0
 class Strategy2:
-    def __init__(self, db, trader_service, platform, cookie):
+    def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
         self.frozen_amount = 0
         self.bought_list = {}
         self.stock_list = []
@@ -28,6 +28,8 @@ class Strategy2:
         self.inner_stock_infos = {}
         # 等待被初始化的全局指数
         self.target_index_infos = {}
+
+        self.realtime_iopv_infos = realtime_iopv_infos
         # 单个股票最大可以持仓多少钱
         self.max_single_amount = 2200
         # 每次出价最低多少钱
@@ -61,22 +63,16 @@ class Strategy2:
         data_loader.load_target_index(self.db, self.inner_stock_infos, self.target_index_infos, self.yesterday)
         data_loader.fresh_holding(self.inner_stock_infos, self.target_index_infos, self.trader_service.get_holding())
 
-        for index_code in self.target_index_infos:
-            group_codes = self.target_index_infos[index_code]['relation'].copy()
-            group_codes.append(utils.enhance_stock_code(index_code, 'index'))
-            subscribe_id = xtdata.subscribe_whole_quote(group_codes, callback=self.handler)
-            logging.info(f"subscribe successful: {subscribe_id}, {index_code}")
-            self.watchdog.register(f"s2_group_{index_code}", 180, "策略2-indexGroup行情")
+        group_codes = []
+        for stock_code in self.inner_stock_infos:
+            group_codes.append(stock_code)
+
+        subscribe_id = xtdata.subscribe_whole_quote(group_codes, callback=self.handler)
+        logging.info(f"subscribe successful: {subscribe_id}")
+        self.watchdog.register("s2_stock", 180, "策略2-ETF行情")
 
         time.sleep(5)
-        logger.info(f"loading rest index...")
-        rest_index_codes = data_loader.get_rest_index(self.target_index_infos)
-        logger.info(f"total target index nums: {len(self.target_index_infos)}")
-        logger.info(f"rest_index_codes nums: {len(rest_index_codes)}, {rest_index_codes}")
-        # 异步多线程通过第三方订阅没有检测到的指数信息
-        self.subscribe_rest_index_stock(rest_index_codes)
         self.watchdog.start()
-        time.sleep(10)
         self.completed_loading = True
         threading.Thread(target=data_loader.interval_fresh_holding, args=(self.inner_stock_infos, self.target_index_infos, self.trader_service)).start()
 
@@ -84,56 +80,33 @@ class Strategy2:
         global print_count_index
         t0 = time.perf_counter()
         try:
+            self.watchdog.feed(f"s2_stock")
             target_index = None
             for code in list(msgs):
-                # code有可能被pop删除了，所以需要在这验证一下
-                if code not in msgs:
-                    continue
-                #先处理指数，如果第一个就是指数
-                if utils.is_target_index(code) and target_index is None:
-                    target_index = utils.purified_code(code)
-                    self.handle_index(msgs[code], target_index)
-                    self.watchdog.feed(f"s2_group_{target_index}")
-                    continue
-                #先处理指数，如果第一个不是指数
-                if not utils.is_target_index(code) and target_index is None:
-                    target_index = self.inner_stock_infos[code]['target_index']
-                    target_index_suffix = utils.enhance_stock_code(target_index, 'index')
-                    self.watchdog.feed(f"s2_group_{target_index}")
-                    if target_index_suffix in msgs:
-                        self.handle_index(msgs[target_index_suffix], target_index)
-                        msgs.pop(target_index_suffix)
-                        continue
                 self.handle_stock(msgs[code], code)
-
                 if not utils.is_normal_trading_hours():
                     # print("未到开盘时间或已收盘")
                     return
                 # begin to analysis data
                 stock_info = self.inner_stock_infos[code]
                 index_info = self.target_index_infos[stock_info['target_index']]
-                if index_info['status'] == False or stock_info['status'] == False:
+                if not stock_info['status']:
                     if self.completed_loading:
                         logger.warning(f"状态未就绪:")
-                        # logger.warning(stock_info)
-                        logger.warning(f"target_index: {target_index}")
-                        logger.warning(index_info)
+                        logger.warning(stock_info)
                     continue
 
-                # 如果更新时间超过1秒就不处理了
-                if (get_time() - index_info['timestamp'] > 8) or (get_time() - stock_info['timestamp'] > 8):
-                    if target_index in self.premium_manager.sell_queue:
-                        self.premium_manager.sell_queue[target_index].remove_stock(code)
-                    # if target_index in self.premium_manager.buy_queue:
-                    #     self.premium_manager.buy_queue[target_index].remove_stock(code)
+                # 如果更新时间超过2秒就不处理了
+                if (get_time() - stock_info['timestamp'] > 2) and (get_time() - self.realtime_iopv_infos[utils.purified_code(code)]['timestamp'] > 2):
+                    self.premium_manager.sell_queue.remove_stock(code)
                     # 超过10秒必然是异常，需要提示出来
-                    if get_time() - index_info['timestamp'] >= 60:
-                        logger.error(f"index{target_index} 更新时间异常，{get_time() - index_info['timestamp']}秒未更新")
-                        self.premium_manager.buy_queue[target_index].remove_stock(code)
-                        logger.info(index_info)
+                    if get_time() - self.realtime_iopv_infos[utils.purified_code(code)]['timestamp'] >= 15:
+                        logger.error(f"etf更新时间异常，{get_time() - self.realtime_iopv_infos[utils.purified_code(code)]['timestamp']}秒未更新")
+                        self.premium_manager.buy_queue.remove_stock(code)
+                        logger.info(self.realtime_iopv_infos[utils.purified_code(code)])
                     if get_time() - stock_info['timestamp'] >= 60:
                         logger.error(f"stock{code} 更新时间异常，{get_time() - stock_info['timestamp']}秒未更新")
-                        self.premium_manager.buy_queue[target_index].remove_stock(code)
+                        self.premium_manager.buy_queue.remove_stock(code)
                         logger.info(stock_info)
                     continue
                 if stock_info['last_net_worth_date'] != self.yesterday:
@@ -143,16 +116,14 @@ class Strategy2:
                 stock_info['last_net_worth'] = float(stock_info['last_net_worth'])
                 index_info['increase_rate'] = float(index_info['increase_rate'])
 
-                appraisal = round(stock_info['last_net_worth'] * (1 + index_info['increase_rate'] * 0.95), 6)
-
-                self.premium_manager.update(appraisal, code, target_index, stock_info, index_info)
+                self.premium_manager.update(code, stock_info, index_info, self.realtime_iopv_infos[utils.purified_code(code)])
                 # it's the time to design trading part
-                first_buy_queue_node = self.premium_manager.buy_queue[target_index].head
-                first_sell_queue_node = self.premium_manager.sell_queue[target_index].head
+                first_buy_queue_node = self.premium_manager.buy_queue.head
+                first_sell_queue_node = self.premium_manager.sell_queue.head
                 # check whether is can be sold
                 if first_buy_queue_node is not None and first_buy_queue_node.code == code and first_buy_queue_node.premium >= 0:
                     logger.info(f"prepare to sell {code}")
-                    self.premium_manager.buy_queue[target_index].remove_stock(code)
+                    self.premium_manager.buy_queue.remove_stock(code)
                     self.trader_strategy_service.to_sell(self.inner_stock_infos, self.target_index_infos, code, first_buy_queue_node.price,
                                                          first_buy_queue_node.appraisal, True)
                     logger.info(f"origin_tick: {msgs[code]}")
@@ -164,9 +135,9 @@ class Strategy2:
                 asset = self.trader_service.get_asset()
                 # whether money is enough
                 if asset.cash - self.frozen_amount >= self.min_bid_amount:
-                    if first_sell_queue_node is not None and first_sell_queue_node.code == code and self.is_max_premium(code) and first_sell_queue_node.premium >= 0:
+                    if first_sell_queue_node is not None and first_sell_queue_node.code == code and first_sell_queue_node.premium >= 0:
                         logger.info(f"prepare to buy {code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-                        self.premium_manager.sell_queue[target_index].remove_stock(code)
+                        self.premium_manager.sell_queue.remove_stock(code)
                         self.trader_strategy_service.to_buy(self.inner_stock_infos, self.target_index_infos, code, first_sell_queue_node.price,
                                                              first_sell_queue_node.appraisal, True)
                         logger.info(f"origin_tick: {msgs[code]}")
@@ -180,18 +151,18 @@ class Strategy2:
                     if first_sell_queue_node.code != code and first_buy_queue_node.code != code:
                         continue
                     # 需要保证买卖队列的数据都是最新的
-                    if (date_utils.get_current_millisecond() - first_sell_queue_node.update_time) / 1000 > 1:
-                        self.premium_manager.sell_queue[target_index].remove_stock(first_sell_queue_node.code)
+                    if (date_utils.get_current_millisecond() - first_sell_queue_node.update_time) / 1000 > 2:
+                        self.premium_manager.sell_queue.remove_stock(first_sell_queue_node.code)
                         continue
-                    if (date_utils.get_current_millisecond() - first_buy_queue_node.update_time) / 1000 > 1:
-                        self.premium_manager.sell_queue[target_index].remove_stock(first_buy_queue_node.code)
+                    if (date_utils.get_current_millisecond() - first_buy_queue_node.update_time) / 1000 > 2:
+                        self.premium_manager.buy_queue.remove_stock(first_buy_queue_node.code)
                         continue
                     if ((first_sell_queue_node.premium > abs(first_buy_queue_node.premium) + self.base_premium_threshold) and
                             (first_sell_queue_node.quantity * first_sell_queue_node.price >= self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] * first_buy_queue_node.price) and
                             self.inner_stock_infos[first_buy_queue_node.code]['hold_can_use_num'] > 0 and first_buy_queue_node.premium > -self.base_premium_threshold):
                         # 操作之前，先从队列中移出去
-                        self.premium_manager.buy_queue[target_index].remove_stock(first_buy_queue_node.code)
-                        self.premium_manager.sell_queue[target_index].remove_stock(first_sell_queue_node.code)
+                        self.premium_manager.buy_queue.remove_stock(first_buy_queue_node.code)
+                        self.premium_manager.sell_queue.remove_stock(first_sell_queue_node.code)
                         # 先卖、后买、最后如果没有买成功取消委托(买和卖的都取消)
                         logger.info(f"队列策略[先卖后买]触发: {code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\r\n"
                                     f"{first_buy_queue_node.code}卖出, price:{round(first_buy_queue_node.price, 4)} quantity:{first_buy_queue_node.quantity} "
@@ -212,30 +183,6 @@ class Strategy2:
                 logging.info(f"Handler Thread: {thread_name} (ID: {thread_id})")
                 logging.info(f'{datetime.now()} main函数运行耗时 {(time.perf_counter() - t0) * 1000:.3f} ms, 处理订阅任务数量: {len(msgs)}个')
 
-    def handle_index(self, index_tick, index_code):
-        # print(f"qmt time: {datetime.fromtimestamp(index_tick['time'] / 1000).strftime('%H:%M:%S')}, local time: {get_datetime()}, 落后: {get_time() - index_tick['time'] / 1000}")
-        try:
-            if index_tick['lastClose'] == 0:
-                self.target_index_infos[index_code].update({'status': True})
-                return
-            if datetime.fromtimestamp(index_tick['time'] / 1000).strftime('%H:%M:%S') == "00:00:00":
-                if self.target_index_infos[index_code]['status']:
-                    self.target_index_infos[index_code].update({'status': False})
-                return
-
-            self.target_index_infos[index_code].update({
-                'timestamp': index_tick['time'] / 1000,
-                'time': datetime.fromtimestamp(index_tick['time'] / 1000).strftime('%H:%M:%S'),
-                'start': index_tick['lastClose'],
-                'current': index_tick['lastPrice'],
-                'increase_rate': round((index_tick['lastPrice'] - index_tick['lastClose']) / index_tick['lastClose'], 6),
-                'data': index_tick,
-                'status': True,
-            })
-        except Exception as e:
-            logger.exception(f"Stock Index handler CRASHED: {e}")
-            notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handle_index中发生致命错误: {str(e)[:200]},\n请立即处理")
-
     def handle_stock(self, stock_tick, stock_code):
         self.inner_stock_infos[stock_code].update({
             'timestamp': stock_tick['time'] / 1000,
@@ -247,61 +194,3 @@ class Strategy2:
             'data': stock_tick,
             'status': True,
         })
-
-    def is_max_premium(self, stock_code):
-        max_premium = 0
-        max_stock_code = None
-        for index_code in self.premium_manager.sell_queue:
-            if self.premium_manager.sell_queue[index_code] is None:
-                continue
-            if self.premium_manager.sell_queue[index_code].head is None:
-                continue
-            if self.premium_manager.sell_queue[index_code].head.premium > max_premium:
-                max_premium = self.premium_manager.sell_queue[index_code].head.premium
-                max_stock_code = self.premium_manager.sell_queue[index_code].head.code
-        return max_stock_code == stock_code
-
-    def subscribe_rest_index_stock(self, rest_index_codes):
-        for index_code in rest_index_codes:
-            threading.Thread(target=spider.stream_listener, args=(index_code, self.spider_cookie, self.subscribe_detail_index_stock)).start()
-            time.sleep(0.5)
-
-    def subscribe_detail_index_stock(self, line, index_code):
-        global rest_index_push_count
-        try:
-            data = json.loads(line.replace('data: ', ''))
-            if data['data'] == "null" or data['data'] is None:
-                # logger.info(f"{index_code}: {data['data']}")
-                return
-            # 记录last day数据
-            if 'f60' in data['data']:
-                self.target_index_infos[index_code].update({'start': data['data']['f60']})
-            if 'f43' not in data['data']:
-                # logger.warning(f"{index_code} [subscribe_detail_index_stock] 发生错误，关键ke数据不存在- {line}")
-                return
-            current_time = 0
-            if 'f86' in data['data']:
-                current_time = data['data']['f86']
-            resp = {'current_index': data['data']['f43']}
-            current_index = resp['current_index']
-            current_time_formate = datetime.fromtimestamp(current_time).strftime('%H:%M:%S')
-            if current_index <= 0:
-                return
-
-            # print(f"third time: {current_time_formate}, local time: {get_datetime()}, 落后: {get_time() - current_time}")
-            self.target_index_infos[index_code].update({
-                # 只有从这里更新的指数数据有这个key，防止连接中断后依据死数据做决策
-                'time': current_time_formate,
-                'timestamp': current_time,
-                'current': resp['current_index'],
-                'increase_rate': round((resp['current_index'] - self.target_index_infos[index_code]['start']) / self.target_index_infos[index_code]['start'], 6),
-                'data': data['data'],
-                'status': True,
-            })
-            rest_index_push_count += 1
-            if rest_index_push_count % 250 == 0:
-                rest_index_push_count = 0
-                logger.info(f"subscribe_detail_index_stock: [{index_code}]-{self.target_index_infos[index_code]}")
-        except IOError as e:
-            logger.error(e)
-            return

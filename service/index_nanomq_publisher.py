@@ -40,7 +40,7 @@ class IndexMqGateway:
 
         self.subscribe_list = []
         self.bse_subscribe_list = []
-        self.real_time_iopv_infos = {}
+        self.realtime_iopv_infos = {}
         self.etf_to_index_code = {}
 
     def _on_mq_connect(self, client, userdata, flags, rc):
@@ -69,12 +69,12 @@ class IndexMqGateway:
                     "r": increase_rate,  # r 存涨跌幅
                     "t": timestamp
                 })
-            self._update_real_time_iopv_infos(compatible_results)
+            self._update_realtime_iopv_infos(compatible_results)
 
         except Exception as e:
             logger.error(f"处理 Golang 结果异常: {e}")
 
-    def _update_real_time_iopv_infos(self, results):
+    def _update_realtime_iopv_infos(self, results):
         for res in results:
             code = res.get("i")
             current_price = res.get("p", 0.0)
@@ -86,14 +86,14 @@ class IndexMqGateway:
 
             pure_code = code
             # 如果字典里还没这个键，先初始化一个空字典
-            if pure_code not in self.real_time_iopv_infos:
-                self.real_time_iopv_infos[pure_code] = {}
+            if pure_code not in self.realtime_iopv_infos:
+                self.realtime_iopv_infos[pure_code] = {}
 
             index_code = self.etf_to_index_code.get(pure_code, '')
             if index_code == '':
                 logger.warning(f"etf_code: {pure_code}, 对应的index_code缺失: {index_code}")
 
-            self.real_time_iopv_infos[pure_code].update({
+            self.realtime_iopv_infos[pure_code].update({
                 'time': datetime.fromtimestamp(time_ms / 1000).strftime('%H:%M:%S'),
                 'timestamp': time_ms / 1000,
                 'start': 0,

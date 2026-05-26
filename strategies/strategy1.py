@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 rest_index_push_count = 0
 
 class Strategy1:
-    def __init__(self, db, trader_service, platform, cookie):
+    def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
         # 预留的钱雷打不动，用来提出
         self.frozen_money = 0
         # 等待被初始化的全局场内基金
@@ -50,6 +50,8 @@ class Strategy1:
         self.trader_strategy_service = trader_services.TraderStrategyService(platform, self.min_bid_money, self.max_bid_money, self.frozen_money, trader_service,self.strategy_name)
         self.watchdog = WatchdogService()
         self.spider_cookie = cookie
+        self.realtime_iopv_infos = realtime_iopv_infos
+
     def _get_lock(self, stock_code):
         # 如果stock_code对应的锁不存在，则创建一个新的锁
         if stock_code not in self.locks:

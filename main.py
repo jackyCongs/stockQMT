@@ -61,7 +61,12 @@ if __name__ == '__main__':
                 parser.error(f"Undefined strategy ID: {args.mode}")
             logger.info(f"Starting strategy: {args.s}")
             strategy_class = strategy_map[args.s]
-            strategy_class(db, trader_service, args.platform, fund_spider_cookie).run()
+            realtime_iopv_infos = {}
+            if args.s == "s2":
+                gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
+                gateway.start_gateway()
+                realtime_iopv_infos = gateway.realtime_iopv_infos
+            strategy_class(db, trader_service, args.platform, fund_spider_cookie, realtime_iopv_infos).run()
             trader_service.xt_trader.run_forever()
         # mode 1: accounting
         elif args.mode == '1':
