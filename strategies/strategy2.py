@@ -114,7 +114,6 @@ class Strategy2:
                     continue
                 # maintain a premium queue
                 stock_info['last_net_worth'] = float(stock_info['last_net_worth'])
-                index_info['increase_rate'] = float(index_info['increase_rate'])
 
                 self.premium_manager.update(code, stock_info, index_info, self.realtime_iopv_infos[utils.purified_code(code)])
                 # it's the time to design trading part

@@ -78,8 +78,8 @@ class Strategy1:
         logger.info(f"total target index nums: {len(self.target_index_infos)}")
         logger.info(f"rest_index_codes nums: {len(rest_index_codes)}, {rest_index_codes}")
         # 异步多线程通过第三方订阅没有检测到的指数信息
-        self.subscribe_rest_index_stock(rest_index_codes)
-        time.sleep(10)
+        # self.subscribe_rest_index_stock(rest_index_codes)
+        # time.sleep(10)
         self.completed_loading = True
         # 开个线程定时刷新持仓
         threading.Thread(target=data_loader.interval_fresh_holding, args=(self.inner_stock_infos, self.target_index_infos, self.trader_service)).start()
@@ -206,9 +206,10 @@ class Strategy1:
             # 双方未就绪，不处理
             if index_info['status'] == False or stock_info['status'] == False:
                 if self.completed_loading:
-                    logger.warning(f"状态未就绪:")
-                    logger.warning(stock_info)
-                    logger.warning(index_info)
+                    pass
+                    # logger.warning(f"状态未就绪:")
+                    # logger.warning(stock_info)
+                    # logger.warning(index_info)
                 return None
 
             if stock_info['last_net_worth_date'] != self.yesterday:
