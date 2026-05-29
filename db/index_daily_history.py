@@ -68,14 +68,16 @@ def upsert_index_tick(db, index_code: str, tick_data: dict):
         conn.rollback()
 
 
-def batch_upsert_index_history(db, update_data_list):
+def batch_upsert_index_history(db, update_data_list, record_type='index'):
     db_conn = db.get_connection()
     if not update_data_list:
         return
+    
+    new_data_list = [tuple(list(row) + [record_type]) for row in update_data_list]
     sql = """
             INSERT INTO index_daily_history 
-            (index_code, trade_date, close_price, pre_close, open_price, high_price, low_price, volatility_rate, volume, amount, data_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (index_code, trade_date, close_price, pre_close, open_price, high_price, low_price, volatility_rate, volume, amount, data_source, type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE 
             close_price = VALUES(close_price),
             pre_close = VALUES(pre_close),
@@ -86,26 +88,31 @@ def batch_upsert_index_history(db, update_data_list):
             volume = VALUES(volume),
             amount = VALUES(amount),
             data_source = VALUES(data_source),
+            type = VALUES(type),
             update_time = CURRENT_TIMESTAMP
         """
     try:
         with db_conn.cursor() as cursor:
             # 使用 executemany 进行极速批量写入
-            cursor.executemany(sql, update_data_list)
+            cursor.executemany(sql, new_data_list)
         db_conn.commit()
     except Exception as e:
         db_conn.rollback()
         exit(f"批量 Upsert 指数历史数据失败: {e}")
 
-def get_updated_index_codes_by_date(db, trade_date):
+def get_updated_index_codes_by_date(db, trade_date, record_type=None):
 # 2. 从数据库查询该日期已存在的去重代码
     conn = db.get_connection()
     actual_codes = set()
     try:
         with conn.cursor() as cursor:
             # 这里的 index_code 建议根据你数据库存的是带后缀还是不带后缀来微调
-            sql = "SELECT index_code FROM index_daily_history WHERE trade_date = %s"
-            cursor.execute(sql, (trade_date,))
+            if record_type:
+                sql = "SELECT index_code FROM index_daily_history WHERE trade_date = %s AND type = %s"
+                cursor.execute(sql, (trade_date, record_type))
+            else:
+                sql = "SELECT index_code FROM index_daily_history WHERE trade_date = %s"
+                cursor.execute(sql, (trade_date,))
             rows = cursor.fetchall()
             actual_codes = set([row[0] for row in rows])
     except Exception as e:

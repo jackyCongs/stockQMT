@@ -110,56 +110,92 @@ class StockService:
             seq = xtdata.subscribe_whole_quote(batch_codes, callback=self.indices_handler)
             logger.info(f"指数批次 {i // batch_size + 1} 订阅成功，包含 {len(batch_codes)} 个指数，订阅ID: {seq}")
             time.sleep(1)  # 指数数据量小，稍微缩短 sleep 时间即可
+            
+        # --- NEW: Get all active ETFs and subscribe ---
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        etf_codes = []
+        try:
+            cursor.execute("SELECT code FROM stock WHERE is_etf = 1 AND status = 1 AND inner_etf_type = 'etf'")
+            etf_rows = cursor.fetchall()
+            etf_codes = [row[0] for row in etf_rows]
+            formatted_etfs = [helper.utils.enhance_stock_code(code) for code in etf_codes]
+            for i in range(0, len(formatted_etfs), batch_size):
+                batch_codes = formatted_etfs[i: i + batch_size]
+                seq = xtdata.subscribe_whole_quote(batch_codes, callback=self.etf_handler)
+                logger.info(f"ETF批次 {i // batch_size + 1} 订阅成功，包含 {len(batch_codes)} 个ETF，订阅ID: {seq}")
+                time.sleep(1)
+        except Exception as e:
+            logger.error(f"查询ETF失败: {e}")
+        finally:
+            cursor.close()
+            conn.close()
         logger.info("开始检查剩余指数部分，将通过第三方数据更新......")
-        time.sleep(15)
+        time.sleep(20)
         # 1. 算差集：找出没收到的漏网之鱼
         rest_index_codes = list(set(formatted_indices) - self.success_indices_set)
 
-        if not rest_index_codes:
+        if rest_index_codes:
+            logger.warning(f"启动第三方兜底，处理 {len(rest_index_codes)} 个缺失指数: {rest_index_codes}")
+            third_party_update_data = []
+            for code in rest_index_codes:
+                try:
+                    clean_code = code.split('.')[0]
+                    # 2. 调用我们刚才写的同步强行阻断函数
+                    logger.info(f"正在通过第三方数据流抓取 {clean_code} 的快照...")
+                    json_data = helper.spider.fetch_single_snapshot_safe(clean_code, fund_spider_cookie)
+                    if not json_data:
+                        logger.warning(f"第三方接口未能获取到 {code} 的数据")
+                        continue
+                    # 3. 复用之前写的 JSON 清洗函数
+                    parsed_rows = self.parse_third_party_index_json(clean_code, json_data, "EastMoney")
+                    if parsed_rows:
+                        third_party_update_data.extend(parsed_rows)
+                        logger.info(f"成功挽救 {clean_code} 数据。")
+                except Exception as e:
+                    logger.error(f"通过第三方获取指数 {code} 失败: {e}")
+                # 安全间隔，虽然我们马上切断了连接，但连续发起建连请求依然容易被风控
+                time.sleep(1)
+                # 批量入库
+            if third_party_update_data:
+                index_daily_history.batch_upsert_index_history(self.db, third_party_update_data, 'index')
+                logger.info(f"第三方兜底任务完成，成功挽救 {len(third_party_update_data)} 条数据")
+        else:
             logger.info("完美！所有指数都已通过官方通道获取成功，无需调用第三方兜底。")
-            return
 
-        logger.warning(f"启动第三方兜底，处理 {len(rest_index_codes)} 个缺失指数: {rest_index_codes}")
-
-        third_party_update_data = []
-        for code in rest_index_codes:
-            try:
-                clean_code = code.split('.')[0]
-                # 2. 调用我们刚才写的同步强行阻断函数
-                logger.info(f"正在通过第三方数据流抓取 {clean_code} 的快照...")
-                json_data = helper.spider.fetch_single_snapshot_safe(clean_code, fund_spider_cookie)
-                if not json_data:
-                    logger.warning(f"第三方接口未能获取到 {code} 的数据")
-                    continue
-                # 3. 复用之前写的 JSON 清洗函数
-                parsed_rows = self.parse_third_party_index_json(clean_code, json_data, "EastMoney")
-                if parsed_rows:
-                    third_party_update_data.extend(parsed_rows)
-                    logger.info(f"成功挽救 {clean_code} 数据。")
-            except Exception as e:
-                logger.error(f"通过第三方获取指数 {code} 失败: {e}")
-            # 安全间隔，虽然我们马上切断了连接，但连续发起建连请求依然容易被风控
-            time.sleep(1)
-            # 批量入库
-        if third_party_update_data:
-            index_daily_history.batch_upsert_index_history(self.db, third_party_update_data)
-            logger.info(f"第三方兜底任务完成，成功挽救 {len(third_party_update_data)} 条数据")
-        logger.info("所有指数批次订阅请求发送完毕")
-        #开始校验
-        updated_index_codes = index_daily_history.get_updated_index_codes_by_date(self.db, self.trade_date)
+        logger.info("所有批次订阅请求发送完毕")
+        #开始校验指数
+        updated_index_codes = index_daily_history.get_updated_index_codes_by_date(self.db, self.trade_date, 'index')
         if len(self.index_codes) == len(updated_index_codes):
-            logger.info(f"✅ 数据校验通过：预期 {len(self.index_codes)} 条，实际 {len(updated_index_codes)} 条。")
+            logger.info(f"✅ 指数数据校验通过：预期 {len(self.index_codes)} 条，实际 {len(updated_index_codes)} 条。")
         else:
             # 找出缺失的具体代码
             missing_codes = set(self.index_codes) - set(updated_index_codes)
             alert_msg = (
                 f"交易日期: {self.trade_date}\n"
-                f"预期数量: {len(self.index_codes)}\n"
-                f"实际数量: {len(updated_index_codes)}\n"
+                f"预期指数数量: {len(self.index_codes)}\n"
+                f"实际指数数量: {len(updated_index_codes)}\n"
                 f"缺失差额: {len(missing_codes)}\n"
                 f"缺失列表: {list(missing_codes)[:10]}..."  # 仅展示前10个防止刷屏
             )
             notifier.send_telegram_alert("🚨 【更新指数数据缺失报警】", alert_msg)
+            logger.error(alert_msg)
+
+        #开始校验ETF
+        updated_etf_codes = index_daily_history.get_updated_index_codes_by_date(self.db, self.trade_date, 'etf')
+        if len(etf_codes) == len(updated_etf_codes):
+            logger.info(f"✅ ETF数据校验通过：预期 {len(etf_codes)} 条，实际 {len(updated_etf_codes)} 条。")
+        else:
+            # 找出缺失的具体代码
+            missing_etfs = set(etf_codes) - set(updated_etf_codes)
+            alert_msg = (
+                f"交易日期: {self.trade_date}\n"
+                f"预期ETF数量: {len(etf_codes)}\n"
+                f"实际ETF数量: {len(updated_etf_codes)}\n"
+                f"缺失差额: {len(missing_etfs)}\n"
+                f"缺失列表: {list(missing_etfs)[:10]}..."  # 仅展示前10个防止刷屏
+            )
+            notifier.send_telegram_alert("🚨 【更新ETF数据缺失报警】", alert_msg)
             logger.error(alert_msg)
         # 计算惩罚值
         self.calculate_and_save_daily_penalty(self.trade_date)
@@ -207,6 +243,12 @@ class StockService:
             conn.close()
 
     def indices_handler(self, msgs):
+        self._process_tick_msgs(msgs, 'index')
+
+    def etf_handler(self, msgs):
+        self._process_tick_msgs(msgs, 'etf')
+
+    def _process_tick_msgs(self, msgs, record_type):
         """
         处理 xtdata 推送回来的指数数据，并拼装为批量入库格式
         """
@@ -246,19 +288,20 @@ class StockService:
                 # 5. 组装为 tuple，严格对齐 batch_upsert_index_history 的参数顺序
                 row_tuple = (purified_code, trade_date, close_price, pre_close, open_price, high_price, low_price, vol_rate, volume, amount, 'QMT')
                 update_data.append(row_tuple)
-                if not hasattr(self, 'success_indices_set'):
+                if not hasattr(self, 'success_indices_set') and record_type == 'index':
                     self.success_indices_set = set()
+                if record_type == 'index':
                     # 注意：这里记录的是未净化的原始订阅 code，方便后续算差集
-                self.success_indices_set.add(code)
+                    self.success_indices_set.add(code)
 
             except Exception as e:
-                logger.error(f"处理指数 {code} 推送数据时解析异常: {e}")
+                logger.error(f"处理数据 {code} 推送数据时解析异常: {e}")
                 continue
         # 6. 调用批量更新函数入库
         if update_data:
             # 假设 self.db 是你的 pymysql connection
-            index_daily_history.batch_upsert_index_history(self.db, update_data)
-            logger.info(f"Batch upsert successful: {len(update_data)} index records")
+            index_daily_history.batch_upsert_index_history(self.db, update_data, record_type)
+            logger.info(f"Batch upsert successful: {len(update_data)} {record_type} records")
 
     def parse_third_party_index_json(self, index_code, json_data, data_source):
         """

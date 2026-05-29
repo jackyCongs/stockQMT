@@ -6,7 +6,10 @@ def get_stock_list(db, inner_etf_type):
     cursor = conn.cursor()
     row_dict_list = []
     try:
-        query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = %s and target_worth_url != '' and status = 1"
+        if inner_etf_type == 'etf':
+            query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = %s and status = 1"
+        else:
+            query = "SELECT * FROM stock where is_etf = 1 and inner_etf_type = %s and target_worth_url != '' and status = 1"
         cursor.execute(query, (str(inner_etf_type),))
         rows = cursor.fetchall()
         column_names = [description[0] for description in cursor.description]
