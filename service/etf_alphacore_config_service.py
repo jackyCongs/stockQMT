@@ -419,7 +419,10 @@ class ETFAlphaCoreConfigService:
                 qty = int(float(qty_str))
             except ValueError:
                 qty = 0
-                
+
+            # 申购替代金额过滤掉没有用
+            if code == "159900" and qty_str == "0":
+                continue
             sub_flag_str = item.get("sub_flag", "允许")
             if sub_flag_str == "必须" or sub_flag_str == "2":
                 sub_flag = "2"
@@ -499,18 +502,6 @@ class ETFAlphaCoreConfigService:
                 hk_stocks.append(f"{code}{suffix}")
                 stock_code = f"{code}{suffix}"
             else:
-                code = raw_code.zfill(6)
-                # 优先使用股票代码前缀进行硬性判断，防止 PCF 数据错误或缺失
-                if code.startswith(('60', '68', '51', '56', '58')):
-                    suffix = ".SH"
-                elif code.startswith(('00', '30', '15')):
-                    suffix = ".SZ"
-                elif code.startswith(('8', '4', '92', '93')):
-                    suffix = ".BJ"
-                else:
-                    market = str(row.get("UNDERLYION_SECURITY_ID", "101"))
-                    market_suffix = {"101": ".SH", "102": ".SZ", "106": ".BJ", "103": ".HK"}
-                    suffix = market_suffix.get(market, ".SH")
                 stock_code = utils.enhance_stock_code(raw_code.zfill(6))
             quantity = int(row["QUANTITY"])
             components[stock_code] = quantity
