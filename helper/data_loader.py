@@ -365,21 +365,45 @@ def run_granular_sell_tests():
 # ]
 # 每天收盘时计算，计算结果存到数据库，以追踪的指数为单位
 def calc_daily_excess_volatility_batch(fund_rates, index_rates_list):
-    total_excess_volatility = Decimal('0')
+    """
+    计算超额波动率。
+    - 支持 1~3 天的数据（新加入的标的可能不足3天）
+    - 当有3天数据时，丢弃波动最小的1天，只取波动最大的2天计算
+    - 当只有1~2天数据时，用所有可用天数计算
+    """
+    num_days = len(fund_rates)
+    if num_days == 0:
+        return Decimal('0')
 
-    for i in range(3):
+    # 计算每天的超额波动
+    daily_excess = []
+    for i in range(num_days):
         # 取绝对值
         f_vol = abs(Decimal(str(fund_rates[i])) * Decimal('100'))
 
         # 找出当天三大指数中波动最大的基准值
-        day_idx_vols = [abs(Decimal(str(idx[i])) * Decimal('100')) for idx in index_rates_list]
-        max_idx_vol = max(day_idx_vols)
+        # 需要确保基准指数在该天也有数据
+        valid_idx_vols = []
+        for idx in index_rates_list:
+            if i < len(idx):
+                valid_idx_vols.append(abs(Decimal(str(idx[i])) * Decimal('100')))
 
-        # 累加每天的超额波动
+        if valid_idx_vols:
+            max_idx_vol = max(valid_idx_vols)
+        else:
+            max_idx_vol = Decimal('0')
+
+        # 当天的超额波动
         excess_vol = max(Decimal('0'), f_vol - max_idx_vol)
-        total_excess_volatility += excess_vol
+        daily_excess.append(excess_vol)
 
-    return total_excess_volatility
+    if num_days >= 3:
+        # 丢弃波动最小的1天，只取波动最大的2天
+        daily_excess.sort(reverse=True)
+        daily_excess = daily_excess[:2]
+
+    # 返回所选天数的超额波动总和
+    return sum(daily_excess)
 
 
 def get_penalty(db_excess_volatility):

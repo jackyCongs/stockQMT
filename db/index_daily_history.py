@@ -132,8 +132,8 @@ def get_3_days_history_list(db, trade_date):
             """
             cursor.execute(date_sql, (trade_date,))
             dates = [row[0] for row in cursor.fetchall()]
-            if len(dates) < 3:
-                print("历史交易日不足3天，无法计算惩罚值")
+            if len(dates) == 0:
+                print("无任何历史交易日数据，无法计算惩罚值")
                 return None
             dates.sort()
             # 升序排列：[T-2, T-1, T0]

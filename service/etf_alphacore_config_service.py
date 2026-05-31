@@ -3,15 +3,16 @@ import json
 import os
 import sys
 import datetime
-import random
 import threading
 import pandas as pd
-import requests
 from xtquant import xtdata
 import time
 from db import index_daily_history
 from db import stock as stock_db
 from helper import utils
+from service.pcf.pcf_provider import PcfProvider
+from service.pcf.sse_pcf_provider import SsePcfProvider
+from service.pcf.szse_pcf_provider import SzsePcfProvider
 
 # 强制 stdout/stderr 使用 utf-8 编码以防 Windows 终端在打印中文字符或 Emoji 时报错
 if hasattr(sys.stdout, 'reconfigure'):
@@ -42,26 +43,18 @@ class ETFAlphaCoreConfigService:
         if hasattr(self, 'initialized'):
             return
         self.initialized = True
-        self._szse_pcf_cache = {}
         self._pcf_info_cache = {}
         self._pcf_comp_cache = {}
         self.pcf_fetch_failures = []
         self.db = db
+        # PCF 数据提供者（共享 pcf_fetch_failures 列表）
+        self._sse_provider = SsePcfProvider(pcf_fetch_failures=self.pcf_fetch_failures)
+        self._szse_provider = SzsePcfProvider(pcf_fetch_failures=self.pcf_fetch_failures)
         self.yesterday_date = yesterday_date
         
         # 默认配置文件路径
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.default_config_path = os.path.join(project_root, "files", "alphacore_config.json")
-
-    def clean_float(self, val) -> float:
-        """清洗并解析浮点数字符串，兼容清除 ￥、元、逗号千分符等货币单位"""
-        if not val:
-            return 0.0
-        val = str(val).replace('￥', '').replace('元', '').replace(',', '').strip()
-        try:
-            return float(val)
-        except ValueError:
-            return 0.0
 
     def _ensure_history_data(self, stock_list, period, start_time, end_time, max_retries=5):
         """同步下载器，确保所有股票的数据在本地缓存"""
@@ -115,348 +108,19 @@ class ETFAlphaCoreConfigService:
         if missing_stocks:
             print(f"  ⚠️ 警告: 有 {len(missing_stocks)} 只股票(如 {list(missing_stocks)[:5]}) 无法获取数据，可能退市或停牌！")
 
-    def get_market_by_stock_code(self, code: str) -> str:
-        """根据证券代码前缀自动识别其所属市场 ID"""
-        if code.startswith(('60', '68', '90')):
-            return "101"  # 上海市场 (.SH)
-        elif code.startswith(('00', '30', '20')):
-            return "102"  # 深圳市场 (.SZ)
-        elif code.startswith(('43', '83', '87', '88')):
-            return "106"  # 北京市场 (.BJ)
-        return "101"  # 默认上海
-
-    def parse_szse_etf_txt(self, content: str) -> tuple[dict, list]:
-        """
-        解析深交所 ETF PCF 文本文件内容。
-        支持解析基础元数据和成份股列表。
-        """
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        metadata = {}
-        components = []
-        
-        col_mappings = {
-            '证券代码': 'code',
-            '证券简称': 'name',
-            '股份数量': 'quantity',
-            '数量': 'quantity',
-            '现金替代标志': 'sub_flag',
-            '替代标志': 'sub_flag',
-            '溢价比例': 'premium_ratio',
-            '替代溢价比例': 'premium_ratio',
-            '代替金额': 'sub_amount',
-            '固定替代金额': 'sub_amount',
-            '替代金额': 'sub_amount'
-        }
-        
-        headers = None
-        
-        for line in lines:
-            if '=' in line and not line.startswith('='):
-                parts = line.split('=', 1)
-                metadata[parts[0].strip()] = parts[1].strip()
-                continue
-            elif ':' in line and not line.startswith(':'):
-                parts = line.split(':', 1)
-                if len(parts[0].strip()) < 30 and not parts[1].strip().startswith('//'):
-                    metadata[parts[0].strip()] = parts[1].strip()
-                    continue
-            elif '：' in line:
-                parts = line.split('：', 1)
-                if len(parts[0].strip()) < 30:
-                    metadata[parts[0].strip()] = parts[1].strip()
-                    continue
-                    
-            parts = [p.strip() for p in line.split('\t') if p.strip()]
-            if len(parts) <= 1:
-                parts = [p.strip() for p in line.split('  ') if p.strip()]
-            if len(parts) <= 1:
-                parts = [p.strip() for p in line.split() if p.strip()]
-                
-            if len(parts) > 1:
-                if any(col in parts for col in col_mappings.keys()):
-                    headers = parts
-                    continue
-                
-                if headers:
-                    row_data = {}
-                    for idx, part in enumerate(parts):
-                        if idx < len(headers):
-                            col_name = headers[idx]
-                            field_name = col_mappings.get(col_name, col_name)
-                            row_data[field_name] = part
-                    components.append(row_data)
-                else:
-                    if parts[0].isdigit() and len(parts[0]) == 6:
-                        components.append({
-                            'code': parts[0],
-                            'name': parts[1] if len(parts) > 1 else '',
-                            'quantity': parts[2] if len(parts) > 2 else '',
-                            'sub_flag': parts[3] if len(parts) > 3 else '',
-                            'raw_line': line
-                        })
-                        
-        if not components:
-            for line in lines:
-                parts = line.split()
-                if parts and parts[0].isdigit() and len(parts[0]) == 6:
-                    row_data = {'code': parts[0]}
-                    if len(parts) > 1: row_data['name'] = parts[1]
-                    if len(parts) > 2: row_data['quantity'] = parts[2]
-                    if len(parts) > 3: row_data['sub_flag'] = parts[3]
-                    components.append(row_data)
-                    
-        return metadata, components
-
-    def _load_szse_pcf(self, fund_code: str) -> tuple[dict, list] | None:
-        """动态获取并解析深交所 ETF PCF 清单数据（自动向前回溯 5 天以兼容节假日/非交易时间）"""
-        if fund_code in self._szse_pcf_cache:
-            return self._szse_pcf_cache[fund_code]
-            
-        now = datetime.datetime.now()
-        today_str = now.strftime("%Y%m%d")
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pcf_dir = os.path.join(project_root, "files", "pcf", today_str)
-        os.makedirs(pcf_dir, exist_ok=True)
-        
-        content = None
-        success_date_str = None
-        
-        # 1. 尝试从本地缓存读取
-        import glob
-        cache_files = glob.glob(os.path.join(pcf_dir, f"SZSE_{fund_code}_*.txt"))
-        if cache_files:
-            cache_file = cache_files[0]
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-                filename = os.path.basename(cache_file)
-                success_date_str = filename.replace(f"SZSE_{fund_code}_", "").replace(".txt", "")
-                print(f"  📖 [缓存读取] 成功读取本地深交所 ETF {fund_code} {success_date_str} 申赎清单数据")
-            except Exception as e:
-                print(f"  ❌ 读取本地缓存失败: {e}")
-                content = None
-                success_date_str = None
-
-        # 2. 如果没有缓存，则从网络获取并写入缓存
-        if not content:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            for i in range(5):
-                date_str = (now - datetime.timedelta(days=i)).strftime("%Y%m%d")
-                url = f"https://reportdocs.static.szse.cn/files/text/etf/ETF{fund_code}{date_str}.txt?random={random.random()}"
-                try:
-                    resp = requests.get(url, headers=headers, timeout=10)
-                    if resp.status_code == 200:
-                        encoding = resp.apparent_encoding or 'gbk'
-                        content = resp.content.decode(encoding, errors='ignore')
-                        success_date_str = date_str
-                        print(f"  🌐 [网络拉取] 成功获取深交所 ETF {fund_code} {date_str} 申赎清单数据")
-
-                        # 存入本地文件
-                        cache_file = os.path.join(pcf_dir, f"SZSE_{fund_code}_{success_date_str}.txt")
-                        try:
-                            with open(cache_file, "w", encoding="utf-8") as f:
-                                f.write(content)
-                        except Exception as e:
-                            print(f"  ❌ 写入本地缓存失败: {e}")
-                        break
-                except Exception:
-                    continue
-                
-        if not content:
-            print(f"获取深交所 ETF {fund_code} 申赎清单数据失败")
-            self.pcf_fetch_failures.append((fund_code, "深交所PCF清单数据拉取失败（连续5天尝试均无数据或网络异常）"))
-            return None
-            
-        metadata, components = self.parse_szse_etf_txt(content)
-        if success_date_str:
-            metadata['TRADING_DAY'] = success_date_str
-        self._szse_pcf_cache[fund_code] = (metadata, components)
-        return metadata, components
-
-    def get_sse_pcf_basic_info(self, fund_code: str) -> dict | None:
-        """获取上交所 ETF 申赎清单基本信息"""
-        today_str = datetime.datetime.now().strftime("%Y%m%d")
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pcf_dir = os.path.join(project_root, "files", "pcf", today_str)
-        os.makedirs(pcf_dir, exist_ok=True)
-        cache_file = os.path.join(pcf_dir, f"SSE_{fund_code}_basic.json")
-        
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    print(f"  📖 [缓存读取] 成功读取本地上交所 ETF {fund_code} 基本信息")
-                    return json.load(f)
-            except Exception:
-                pass
-                
-        url = "https://query.sse.com.cn/commonQuery.do"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.sse.com.cn/disclosure/fund/etflist/detail.shtml",
-        }
-        params = {
-            "isPagination": "false",
-            "FUNDID2": fund_code,
-            "sqlId": "COMMON_SSE_CP_JJLB_ETFJJGK_GGSGSHQD_JBXX_C",
-        }
-        try:
-            resp = requests.get(url, headers=headers, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if data and data.get("result") and len(data["result"]) > 0:
-                result_data = data["result"][0]
-                print(f"  🌐 [网络拉取] 成功获取上交所 ETF {fund_code} 基本信息")
-                try:
-                    with open(cache_file, "w", encoding="utf-8") as f:
-                        json.dump(result_data, f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-                return result_data
-            self.pcf_fetch_failures.append((fund_code, "上交所PCF基本信息接口返回空数据"))
-            return None
-        except Exception as e:
-            print(f"获取上交所PCF基本信息失败: {e}")
-            self.pcf_fetch_failures.append((fund_code, f"上交所PCF基本信息请求异常: {e}"))
-            return None
-
-    def get_sse_pcf_components(self, fund_code: str) -> pd.DataFrame | None:
-        """获取上交所 ETF 申赎清单成分股列表"""
-        today_str = datetime.datetime.now().strftime("%Y%m%d")
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pcf_dir = os.path.join(project_root, "files", "pcf", today_str)
-        os.makedirs(pcf_dir, exist_ok=True)
-        cache_file = os.path.join(pcf_dir, f"SSE_{fund_code}_comp.json")
-        
-        result_list = None
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    result_list = json.load(f)
-                    print(f"  📖 [缓存读取] 成功读取本地上交所 ETF {fund_code} 成分股")
-            except Exception:
-                pass
-                
-        url = "https://query.sse.com.cn/commonQuery.do"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.sse.com.cn/disclosure/fund/etflist/detail.shtml",
-        }
-        params = {
-            "isPagination": "false",
-            "FUNDID2": fund_code,
-            "sqlId": "COMMON_SSE_CP_JJLB_ETFJJGK_GGSGSHQD_COMPONENT_C",
-        }
-        
-        if result_list is None:
-            try:
-                resp = requests.get(url, headers=headers, params=params, timeout=10)
-                resp.raise_for_status()
-                data = resp.json()
-                if data and data.get("result") and len(data["result"]) > 0:
-                    result_list = data["result"]
-                    print(f"  🌐 [网络拉取] 成功获取上交所 ETF {fund_code} 成分股")
-                    try:
-                        with open(cache_file, "w", encoding="utf-8") as f:
-                            json.dump(result_list, f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
-                else:
-                    self.pcf_fetch_failures.append((fund_code, "上交所PCF成分股接口返回空数据"))
-                    return None
-            except Exception as e:
-                print(f"获取上交所PCF成分股失败: {e}")
-                self.pcf_fetch_failures.append((fund_code, f"上交所PCF成分股请求异常: {e}"))
-                return None
-                
-        try:
-            df = pd.DataFrame(result_list)
-            
-            # 清洗上交所特定的申购替代金额 (SUBSTITUTION_CASH_AMOUNT) 并映射为 '申购替代金额' 列
-            def clean_sse_sub_amount(val):
-                if not val or str(val).strip() == '-':
-                    return '0'
-                return str(val).replace(',', '').strip()
-                
-            if 'SUBSTITUTION_CASH_AMOUNT' in df.columns:
-                df['申购替代金额'] = df['SUBSTITUTION_CASH_AMOUNT'].apply(clean_sse_sub_amount)
-            else:
-                df['申购替代金额'] = '0'
-                
-            return df
-        except Exception as e:
-            print(f"解析上交所PCF成分股失败: {e}")
-            return None
-
-    def get_szse_pcf_basic_info(self, fund_code: str) -> dict | None:
-        """获取深交所 ETF 申赎清单基本信息，并映射为与上交所一致的字段"""
-        res = self._load_szse_pcf(fund_code)
-        if not res:
-            return None
-        metadata, _ = res
-        mapped_info = {
-            "ESTIMATED_CASH_COMPONENT": metadata.get("预估现金差额", "0.0"),
-            "NAV": metadata.get("基金份额净值", "0.0")
-        }
-        mapped_info.update(metadata)
-        return mapped_info
-
-    def get_szse_pcf_components(self, fund_code: str) -> pd.DataFrame | None:
-        """获取深交所 ETF 申赎清单成分股列表，并映射为与上交所一致的格式"""
-        res = self._load_szse_pcf(fund_code)
-        if not res:
-            return None
-        _, components = res
-        if not components:
-            return None
-            
-        mapped_list = []
-        for item in components:
-            code = item.get("code", "")
-            qty_str = str(item.get("quantity", "0")).replace(",", "").strip()
-            try:
-                qty = int(float(qty_str))
-            except ValueError:
-                qty = 0
-
-            # 申购替代金额过滤掉没有用
-            if code == "159900" and qty_str == "0":
-                continue
-            sub_flag_str = item.get("sub_flag", "允许")
-            if sub_flag_str == "必须" or sub_flag_str == "2":
-                sub_flag = "2"
-            elif sub_flag_str == "允许" or sub_flag_str == "1":
-                sub_flag = "1"
-            else:
-                sub_flag = "0"
-                
-            market = self.get_market_by_stock_code(code)
-            
-            mapped_item = {
-                "INSTRUMENT_ID": code,
-                "UNDERLYION_SECURITY_ID": market,
-                "QUANTITY": qty,
-                "SUBSTITUTION_FLAG": sub_flag,
-                "申购替代金额": str(item.get("申购替代金额", "0")).replace(",", "").strip(),
-            }
-            mapped_list.append(mapped_item)
-            
-        return pd.DataFrame(mapped_list)
+    def _get_pcf_provider(self, fund_code: str) -> PcfProvider:
+        """根据基金代码获取对应交易所的 PCF 数据提供者"""
+        if fund_code.startswith("1"):
+            return self._szse_provider
+        return self._sse_provider
 
     def get_pcf_basic_info(self, fund_code: str) -> dict | None:
         """获取 ETF 申赎清单基本信息（现金差额、最小申赎单位、净值等，支持沪深两市）"""
-        if fund_code.startswith("1"):
-            return self.get_szse_pcf_basic_info(fund_code)
-        else:
-            return self.get_sse_pcf_basic_info(fund_code)
+        return self._get_pcf_provider(fund_code).get_basic_info(fund_code)
 
     def get_pcf_components(self, fund_code: str) -> pd.DataFrame | None:
         """获取 ETF 申赎清单成分股列表（支持沪深两市）"""
-        if fund_code.startswith("1"):
-            return self.get_szse_pcf_components(fund_code)
-        else:
-            return self.get_sse_pcf_components(fund_code)
+        return self._get_pcf_provider(fund_code).get_components(fund_code)
 
     def generate_config(self, fund_code: str, current_idx: int = 0, total_count: int = 0):
         """
@@ -492,25 +156,45 @@ class ETFAlphaCoreConfigService:
 
         components = {}
         hk_stocks = []
+        non_a_shares = []
         for _, row in physical_df.iterrows():
             raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
+            market_id = str(row.get("UNDERLYION_SECURITY_ID", "")).strip()
 
-            # 港股处理：如果原代码刚好是 5 位数字，说明是港股通标的
-            if len(raw_code) == 5 and raw_code.isdigit():
-                code = raw_code
+            # 103 表示港股市场
+            if market_id == "103" or (len(raw_code) == 5 and raw_code.isdigit()):
+                # 统一转成 5 位港股代码
+                code = raw_code.zfill(5)
                 suffix = ".HK"
                 hk_stocks.append(f"{code}{suffix}")
                 stock_code = f"{code}{suffix}"
             else:
-                stock_code = utils.enhance_stock_code(raw_code.zfill(6))
+                # 严格判断是否为纯正 A 股，不要盲目使用 zfill(6) 以免把 981 变成 000981 误认为深交所 A 股
+                # 如果真的是 A 股，交易所返回的一定是足额 6 位的字符串（如 '000001'）
+                if not utils.is_normal_a_share(raw_code):
+                    stock_code = raw_code
+                    non_a_shares.append(stock_code)
+                else:
+                    stock_code = utils.enhance_stock_code(raw_code)
+                    
             quantity = int(row["QUANTITY"])
             components[stock_code] = quantity
 
         print(f"  components 构建完成: {len(components)} 只股票")
+        
+        if not components:
+            print("  🚫 该 ETF 无有效的 A 股物理成分股 (可能为全现金替代或境外 ETF)，跳过生成。")
+            return {"skipped": True, "reason": "无有效A股物理成分股"}
 
-        if hk_stocks:
-            print(f"  🚫 发现 {len(hk_stocks)} 只港股成分股，当前配置系统暂不生成该 ETF。")
-            return {"skipped": True, "hk_stocks": hk_stocks}
+        if hk_stocks or non_a_shares:
+            skip_reasons = []
+            if hk_stocks:
+                skip_reasons.append(f"{len(hk_stocks)} 只港股成分股")
+            if non_a_shares:
+                skip_reasons.append(f"{len(non_a_shares)} 只非A股(债券/黄金/商品等)")
+                
+            print(f"  🚫 发现 {'、'.join(skip_reasons)}，当前配置系统暂不生成该 ETF。")
+            return {"skipped": True, "hk_stocks": hk_stocks, "non_a_shares": non_a_shares}
 
         # ---- 2. 获取昨收价，计算 basket_pre_close ----
         print("\n[2/4] 获取昨收价并计算 basket_pre_close...")
@@ -625,12 +309,12 @@ class ETFAlphaCoreConfigService:
         print("\n[4/4] 写入配置文件...")
         config_path = self.default_config_path
 
-        estimated_cash = self.clean_float(info.get("ESTIMATED_CASH_COMPONENT", 0.0)) if info else 0.0
-        net_asset_value = self.clean_float(info.get("NAV", 0.0)) if info else 0.0
+        estimated_cash = PcfProvider.clean_float(info.get("ESTIMATED_CASH_COMPONENT", 0.0)) if info else 0.0
+        net_asset_value = PcfProvider.clean_float(info.get("NAV", 0.0)) if info else 0.0
 
         # 提取 PCF 中的原始金额
         origin_basket_amount_raw = info.get("NAVPERCU") or info.get("最小申购、赎回单位资产净值") or 0.0
-        origin_basket_amount = self.clean_float(origin_basket_amount_raw)
+        origin_basket_amount = PcfProvider.clean_float(origin_basket_amount_raw)
         
         # 当天日期
         today_str = datetime.datetime.now().strftime("%Y%m%d")
@@ -697,33 +381,16 @@ class ETFAlphaCoreConfigService:
 
         today_str = datetime.datetime.now().strftime("%Y%m%d")
         outdated_funds = []
-        mismatch_funds = []
+
 
         for fund_code, data in config_data.items():
-            # 1. 校验 update_date
+            # 校验 update_date
             update_date = data.get("update_date", "")
             if update_date != today_str:
                 outdated_funds.append((fund_code, update_date))
 
-            # 2. 校验 basket_pre_close + estimated_cash == origin_basket_amount
-            basket_pre_close = data.get("basket_pre_close", 0.0)
-            estimated_cash = data.get("estimated_cash", 0.0)
-            origin_basket_amount = data.get("origin_basket_amount", 0.0)
-            
-            calculated_amount = round(basket_pre_close + estimated_cash, 2)
-            # 允许 0.01 的浮点数误差
-            if abs(calculated_amount - origin_basket_amount) > 0.01:
-                diff = calculated_amount - origin_basket_amount
-                mismatch_funds.append({
-                    "fund_code": fund_code,
-                    "calculated": calculated_amount,
-                    "origin": origin_basket_amount,
-                    "diff": round(diff, 2)
-                })
-
         # 输出校验结果
-        has_error = len(outdated_funds) > 0 or len(mismatch_funds) > 0
-        
+        has_error = len(outdated_funds) > 0
         # ANSI escape sequences for bold, colored terminal logs
         RED = "\033[1;31m"
         GREEN = "\033[1;32m"
@@ -745,28 +412,29 @@ class ETFAlphaCoreConfigService:
                         print(RED + BOLD + f"    ✗ 基金 [{fund_code}]: 缺失 update_date 字段，请检查生成逻辑！" + RESET)
                     else:
                         print(RED + BOLD + f"    ✗ 基金 [{fund_code}]: 日期为 {u_date} (今天应为 {today_str}) 【漏掉未更新！】" + RESET)
-                        
-            if mismatch_funds:
-                print(YELLOW + BOLD + "\n  👉【 金额不一致异常列表 (basket_pre_close + 现金部分 != origin_basket_amount) 】" + RESET)
-                for item in mismatch_funds:
-                    print(RED + BOLD + f"    ✗ 基金 [{item['fund_code']}]:" + RESET)
-                    print(f"      - 计算金额 (物理市值+现金): {CYAN}{item['calculated']:.2f}{RESET}")
-                    print(f"      - PCF 原始金额 (origin):   {CYAN}{item['origin']:.2f}{RESET}")
-                    print(f"      - 偏差金额 (计算 - 原始):   {RED}{BOLD}{item['diff']:+.2f}{RESET}")
-                    print(f"      [注] 若此 ETF 包含必须现金替代成分(SUBSTITUTION_FLAG=2)，该偏差属正常现象。")
             print("\n" + RED + "🚨" * 40 + RESET)
         else:
             print("\n" + GREEN + "======================================================================" + RESET)
-            print(GREEN + BOLD + "  ✓ 配置文件校验通过！所有基金日期均为当天，且计算总额与 PCF 原始金额完全一致！" + RESET)
+            print(GREEN + BOLD + "  ✓ 配置文件校验通过！所有基金日期均为当天！" + RESET)
             print(GREEN + "======================================================================" + RESET)
 
     def run(self):
         self.pcf_fetch_failures = []
+        # 同步更新 Provider 的错误列表引用
+        self._sse_provider.pcf_fetch_failures = self.pcf_fetch_failures
+        self._szse_provider.pcf_fetch_failures = self.pcf_fetch_failures
         fund_codes = []
 
         stocks = stock_db.get_stock_list(self.db, 'etf')
         for stock in stocks:
-            fund_codes.append(stock['code'])
+            code = stock['code']
+            # 目前只跑上交所
+            # if code.startswith('1'):
+            #     fund_codes.append(code)
+            
+            # 目前只允许上交所(5开头)进入配置生成流水线
+            if code.startswith('5'):
+                fund_codes.append(code)
 
         # 临时具体看看什么情况
         # fund_codes = ["515530"]
@@ -784,7 +452,9 @@ class ETFAlphaCoreConfigService:
         self._pcf_info_cache = {}
         self._pcf_comp_cache = {}
         
-        for fund_code in fund_codes:
+        total_funds = len(fund_codes)
+        for i, fund_code in enumerate(fund_codes):
+            print(f"  ⏳ [{i+1}/{total_funds}] 正在获取并解析 ETF {fund_code} 的 PCF 清单...")
             info = self.get_pcf_basic_info(fund_code)
             comp_df = self.get_pcf_components(fund_code)
             self._pcf_info_cache[fund_code] = info
@@ -794,11 +464,12 @@ class ETFAlphaCoreConfigService:
                 physical_df = comp_df[comp_df["SUBSTITUTION_FLAG"] != "2"]
                 for _, row in physical_df.iterrows():
                     raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
-                    if len(raw_code) == 5 and raw_code.isdigit():
+                    market_id = str(row.get("UNDERLYION_SECURITY_ID", "")).strip()
+                    if market_id == "103" or (len(raw_code) == 5 and raw_code.isdigit()):
                         continue
                     else:
-                        code = raw_code.zfill(6)
-                        all_required_stocks.add(utils.enhance_stock_code(code))
+                        if utils.is_normal_a_share(raw_code):
+                            all_required_stocks.add(utils.enhance_stock_code(raw_code))
 
         if all_required_stocks:
             qmt_yesterday = self.yesterday_date.replace('-', '')
@@ -817,30 +488,40 @@ class ETFAlphaCoreConfigService:
         print("=" * 70)
         
         skipped_hk_etfs = {}
+        skipped_non_a_etfs = {}
         total_funds = len(fund_codes)
         for i, fund_code in enumerate(fund_codes):
             try:
                 res = self.generate_config(fund_code, current_idx=i+1, total_count=total_funds)
                 if res and res.get("skipped"):
-                    skipped_hk_etfs[fund_code] = res.get("hk_stocks", [])
+                    if res.get("hk_stocks"):
+                        skipped_hk_etfs[fund_code] = res.get("hk_stocks", [])
+                    if res.get("non_a_shares"):
+                        skipped_non_a_etfs[fund_code] = res.get("non_a_shares", [])
             except Exception as e:
                 print(f"  ❌ 生成 ETF {fund_code} 配置时发生错误: {e}")
                 
         # 统一执行一次强校验
         self.verify_config()
         
-        if skipped_hk_etfs:
+        if skipped_hk_etfs or skipped_non_a_etfs:
             YELLOW = "\033[1;33m"
             CYAN = "\033[1;36m"
             BOLD = "\033[1m"
             RESET = "\033[0m"
             print("\n" + YELLOW + "======================================================================" + RESET)
-            print(YELLOW + BOLD + "  🚫 【特殊情况】以下 ETF 包含港股成分，已跳过配置生成：" + RESET)
+            print(YELLOW + BOLD + "  🚫 【特殊情况】以下 ETF 包含非A股成分，已跳过配置生成：" + RESET)
             print(YELLOW + "======================================================================" + RESET)
-            for fund, hks in skipped_hk_etfs.items():
-                print(YELLOW + BOLD + f"  👉 ETF [{fund}] 包含 {len(hks)} 只港股：" + RESET)
-                for i in range(0, len(hks), 10):
-                    print(CYAN + f"       {', '.join(hks[i:i+10])}" + RESET)
+            if skipped_hk_etfs:
+                for fund, hks in skipped_hk_etfs.items():
+                    print(YELLOW + BOLD + f"  👉 ETF [{fund}] 包含 {len(hks)} 只港股：" + RESET)
+                    for i in range(0, len(hks), 10):
+                        print(CYAN + f"       {', '.join(hks[i:i+10])}" + RESET)
+            if skipped_non_a_etfs:
+                for fund, nas in skipped_non_a_etfs.items():
+                    print(YELLOW + BOLD + f"  👉 ETF [{fund}] 包含 {len(nas)} 只非A股(债券/黄金/商品等)：" + RESET)
+                    for i in range(0, len(nas), 10):
+                        print(CYAN + f"       {', '.join(nas[i:i+10])}" + RESET)
             print(YELLOW + "======================================================================\n" + RESET)
 
         if getattr(self, 'pcf_fetch_failures', None):

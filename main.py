@@ -41,7 +41,7 @@ if __name__ == '__main__':
     }
     parser = argparse.ArgumentParser(description="StockQMT: Quantitative Trading System Runner")
     # param：-mode
-    parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2", "3", "4"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data")
+    parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2", "3", "4", "5"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data, 5: Maintain SH ETFs")
     # param：-platform
     parser.add_argument("-platform", type=str, choices=["大同证券", "湘财证券"], help="Target trading platform: 大同证券, 湘财证券")
     # param: -strategy
@@ -92,6 +92,11 @@ if __name__ == '__main__':
             gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
             gateway.start_gateway()
             xtdata.run()
+        elif args.mode == '5':
+            stock_service = StockService(db)
+            logger.info("开始维护上交所场内ETF数据...")
+            stock_service.maintain_sh_etfs()
+            logger.info("上交所场内ETF数据维护完毕。")
         else:
             logger.info(f"Unknown execution mode: {args.mode}")
     except Exception as e:
