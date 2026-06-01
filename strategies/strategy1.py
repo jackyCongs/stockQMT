@@ -65,8 +65,8 @@ class Strategy1:
 
         SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(self.db, self.strategy_etf_type), callback=self.stock_handler)
         SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(self.inner_stock_infos), callback=self.index_handler)
-        self.watchdog.register("s1_stock", 180, "策略1-stock行情")
-        self.watchdog.register("s1_index", 180, "策略1-index行情")
+        self.watchdog.register("s1_stock", 30, "策略1-stock行情")
+        self.watchdog.register("s1_index", 30, "策略1-index行情")
         self.watchdog.start()
 
         logger.info(f"策略1启动，订阅成功: SId1-{SId1}, SId2-{SId2}\r")

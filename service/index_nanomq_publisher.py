@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 import paho.mqtt.client as mqtt
 from xtquant import xtdata
+from service.watchdog_service import WatchdogService
 
 # 注入并导入通达信 TQ 插件路径
 tdx_path = r"D:\stock_software\tongdaxin\PYPlugins\user"
@@ -42,6 +43,7 @@ class IndexMqGateway:
         self.bse_subscribe_list = []
         self.realtime_iopv_infos = {}
         self.etf_to_index_code = {}
+        self.watchdog = WatchdogService()
 
     def _on_mq_connect(self, client, userdata, flags, rc):
         """MQTT 连接成功后的钩子"""
@@ -138,6 +140,7 @@ class IndexMqGateway:
 
     def on_whole_tick_callback(self, datas):
         try:
+            self.watchdog.feed("publisher_qmt_tick")
             batch_payload = []
             for stock_code, tick_data in datas.items():
                 if not tick_data:
@@ -163,6 +166,7 @@ class IndexMqGateway:
     def _on_bse_hq_callback(self, data_str):
         """通达信 TQ 行情更新回调 - 收到推送后获取快照并转发 MQ"""
         try:
+            self.watchdog.feed("publisher_bse_tick")
             code_info = json.loads(data_str)
             stock_code = code_info.get('Code', '')
             if not stock_code:
@@ -212,6 +216,7 @@ class IndexMqGateway:
         # ① 启动北交所 TQ 行情订阅
         if self.bse_subscribe_list:
             self._start_bse_subscription()
+            self.watchdog.register("publisher_bse_tick", 30, "行情网关-北交所TQ行情")
 
         # ② 其余股票走 QMT 全推
         if self.subscribe_list:
@@ -220,7 +225,12 @@ class IndexMqGateway:
                 code_list=self.subscribe_list,
                 callback=self.on_whole_tick_callback
             )
+            self.watchdog.register("publisher_qmt_tick", 30, "行情网关-QMT全推行情")
+
+        # 启动看门狗（单例，如果已启动不会重复启动）
+        self.watchdog.start()
 
         print("⚡ 极速行情网关已全线贯通！QMT + TQ 双引擎全速运转中...")
+        print("🐶 看门狗已挂载，QMT/北交所行情中断将自动报警")
         print("🛑 保持此进程存活... (按 Ctrl+C 终止)")
 

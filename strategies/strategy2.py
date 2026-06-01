@@ -60,14 +60,19 @@ class Strategy2:
         data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.strategy_etf_type)
         from db import index_daily_history
         for code, stock_info in self.inner_stock_infos.items():
-            stock_info['target_index'] = code
-            penalty_rate = index_daily_history.get_index_penalty_rate(self.db, code, self.yesterday)
-            self.target_index_infos[code] = {
-                'relation': [code],
+            index_code = stock_info['index_code']
+            if not stock_info['target_index']:
+                penalty_rate = index_daily_history.get_index_penalty_rate(self.db, utils.purified_code(code), self.yesterday)
+                # 没有index的，自己先作为一个index的group
+                index_code = utils.purified_code(code)
+            else:
+                penalty_rate = index_daily_history.get_index_penalty_rate(self.db, utils.purified_code(code), self.yesterday, self.strategy_etf_type)
+            self.target_index_infos[index_code] = {
+                #'relation': [code],
                 'penalty_rate': penalty_rate,
                 'status': True,
                 'index_total_market_value': 0.0,
-                'increase_rate': 0
+                #'increase_rate': 0
             }
         data_loader.fresh_holding(self.inner_stock_infos, self.target_index_infos, self.trader_service.get_holding())
 
@@ -77,7 +82,7 @@ class Strategy2:
 
         subscribe_id = xtdata.subscribe_whole_quote(group_codes, callback=self.handler)
         logging.info(f"subscribe successful: {subscribe_id}")
-        self.watchdog.register("s2_stock", 180, "策略2-ETF行情")
+        self.watchdog.register("s2_stock", 30, "策略2-ETF行情")
 
         time.sleep(5)
         self.watchdog.start()

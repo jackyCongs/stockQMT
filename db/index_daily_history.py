@@ -174,16 +174,16 @@ def update_penalty_data(db, update_penalty_data):
         conn.close()
 
 
-def get_index_penalty_rate(db, index_code, trade_date):
+def get_index_penalty_rate(db, index_code, trade_date, index_type = 'index'):
     conn = db.get_connection()
     try:
         with conn.cursor() as cursor:
             sql = """
                 SELECT penalty_rate 
                 FROM index_daily_history 
-                WHERE index_code = %s AND trade_date = %s
+                WHERE index_code = %s AND trade_date = %s and type = %s
             """
-            cursor.execute(sql, (index_code, trade_date))
+            cursor.execute(sql, (index_code, trade_date, index_type))
             row = cursor.fetchone()
             if row is not None:
                 return float(row[0])

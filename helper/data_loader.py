@@ -411,7 +411,7 @@ def get_penalty(db_excess_volatility):
     excess_vol = Decimal(str(db_excess_volatility))
 
     # 静态规则与参数 (O(1) 极速计算)
-    tolerance = Decimal('1.5')
+    tolerance = Decimal('0')
 
     # 如果没超过容忍度，直接 0 消耗返回
     if excess_vol <= tolerance:

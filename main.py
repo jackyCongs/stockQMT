@@ -66,6 +66,7 @@ if __name__ == '__main__':
                 gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
                 gateway.start_gateway()
                 realtime_iopv_infos = gateway.realtime_iopv_infos
+                time.sleep(5)
             strategy_class(db, trader_service, args.platform, fund_spider_cookie, realtime_iopv_infos).run()
             trader_service.xt_trader.run_forever()
         # mode 1: accounting
