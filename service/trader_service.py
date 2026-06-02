@@ -153,7 +153,7 @@ class TraderStrategyService:
 
     def to_buy(self, inner_stock_infos, target_index_infos, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = inner_stock_infos[stock_code]
-        index_info = target_index_infos[stock_info['target_index']]
+        index_info = target_index_infos[data_loader.get_group_code(stock_info['target_index'], stock_code)]
         increase_rate = index_info.get('increase_rate', 0)
         # 卖不用管，买需要加锁，防止重复购买
         logger.info(f"to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
@@ -242,7 +242,7 @@ class TraderStrategyService:
 
     def to_sell(self, inner_stock_infos, target_index_infos, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = inner_stock_infos[stock_code]
-        index_info = target_index_infos[stock_info['target_index']]
+        index_info = target_index_infos[data_loader.get_group_code(stock_info['target_index'], stock_code)]
         increase_rate = index_info.get('increase_rate', 0)
         logger.info(f"to_sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         if len(stock_info['bidPrice']) > 0 and stock_info['hold_can_use_num'] > 0:

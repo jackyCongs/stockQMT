@@ -58,22 +58,7 @@ class Strategy2:
     # 启动策略
     def run(self):
         data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.strategy_etf_type)
-        from db import index_daily_history
-        for code, stock_info in self.inner_stock_infos.items():
-            index_code = stock_info['index_code']
-            if not stock_info['target_index']:
-                penalty_rate = index_daily_history.get_index_penalty_rate(self.db, utils.purified_code(code), self.yesterday)
-                # 没有index的，自己先作为一个index的group
-                index_code = utils.purified_code(code)
-            else:
-                penalty_rate = index_daily_history.get_index_penalty_rate(self.db, utils.purified_code(code), self.yesterday, self.strategy_etf_type)
-            self.target_index_infos[index_code] = {
-                #'relation': [code],
-                'penalty_rate': penalty_rate,
-                'status': True,
-                'index_total_market_value': 0.0,
-                #'increase_rate': 0
-            }
+        data_loader.load_target_index_for_etf(self.db, self.inner_stock_infos, self.target_index_infos, self.yesterday, self.strategy_etf_type)
         data_loader.fresh_holding(self.inner_stock_infos, self.target_index_infos, self.trader_service.get_holding())
 
         group_codes = []
@@ -102,7 +87,7 @@ class Strategy2:
                     return
                 # begin to analysis data
                 stock_info = self.inner_stock_infos[code]
-                index_info = self.target_index_infos[stock_info['target_index']]
+                index_info = self.target_index_infos[data_loader.get_group_code(stock_info['target_index'], code)]
                 if not stock_info['status']:
                     if self.completed_loading:
                         logger.warning(f"状态未就绪:")

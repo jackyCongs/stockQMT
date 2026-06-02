@@ -181,23 +181,80 @@ def get_all_target_index_code(inner_stock_infos):
 
 
 def load_target_index(db, inner_stock_infos, target_index_infos, yesterday_date):
+    # 先收集所有去重的 target_index，并统一类型为 'index'
+    unique_target_indices = set(
+        info['target_index'] for info in inner_stock_infos.values() if info.get('target_index')
+    )
+    code_type_list = [(idx_code, 'index') for idx_code in unique_target_indices]
+    
+    # 批量查询所有惩罚值
+    penalty_rates = index_daily_history.get_batch_index_penalty_rates(db, code_type_list, yesterday_date)
+
     pbar = tqdm(total=len(inner_stock_infos), desc="index loading...", mininterval=0.1)
-    for code in inner_stock_infos:
-        if inner_stock_infos[code]['target_index'] not in target_index_infos:
+    for code, info in inner_stock_infos.items():
+        target_idx = info['target_index']
+        if not target_idx:
+            logger.warning(f"load_target_index: {target_idx} 不存在，需要注意")
+            pbar.update(1)
+            continue
+            
+        if target_idx not in target_index_infos:
             relation = [code]
         else:
-            relation = target_index_infos[inner_stock_infos[code]['target_index']]['relation']
+            relation = target_index_infos[target_idx]['relation']
             if code not in relation:
                 relation.append(code)
+                
         # get penalty_rate
-        penalty_rate = index_daily_history.get_index_penalty_rate(db, inner_stock_infos[code]['target_index'], yesterday_date)
-        target_index_infos[inner_stock_infos[code]['target_index']] = {
+        penalty_rate = penalty_rates.get(target_idx, 0.0)
+        target_index_infos[target_idx] = {
             'relation': relation,
             'penalty_rate': penalty_rate,
             'status': False,
         }
         pbar.update(1)
     pbar.close()
+
+
+def load_target_index_for_etf(db, inner_stock_infos, target_index_infos, yesterday_date, strategy_etf_type):
+    # 先收集所有需要查询的 (code, type) 对，一次性批量查询
+    code_type_list = []
+    for code, stock_info in inner_stock_infos.items():
+        purified = utils.purified_code(code)
+        if not stock_info['target_index'] or not stock_info['target_index'].isdigit():
+            # 如果不存在指数，取 etf 自己的惩罚
+            code_type_list.append((purified, strategy_etf_type))
+        else:
+            # 如果 etf 存在关联指数，就取指数的惩罚
+            target_idx = utils.purified_code(stock_info['target_index'])
+            code_type_list.append((target_idx, 'index'))
+
+    # 一次 SQL 查询所有 penalty_rate
+    penalty_rates = index_daily_history.get_batch_index_penalty_rates(db, code_type_list, yesterday_date)
+    
+    for code, stock_info in inner_stock_infos.items():
+        index_code = stock_info.get('target_index', '')
+        purified = utils.purified_code(code)
+        if not stock_info['target_index'] or not stock_info['target_index'].isdigit():
+            # 没有index的，自己先作为一个index的group
+            index_code = purified
+            penalty_rate = penalty_rates.get(purified, 0.0)
+        else:
+            target_idx = stock_info['target_index']
+            penalty_rate = penalty_rates.get(target_idx, 0.0)
+            
+        target_index_infos[index_code] = {
+            #'relation': [code],
+            'penalty_rate': penalty_rate,
+            'status': True,
+            'index_total_market_value': 0.0,
+            #'increase_rate': 0
+        }
+
+def get_group_code(target_index, etf_code):
+    if not target_index or not target_index.isdigit():
+        return utils.purified_code(etf_code)
+    return target_index
 
 
 def get_rest_index(target_index_infos):

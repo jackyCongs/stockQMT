@@ -209,6 +209,56 @@ def get_index_penalty_rate(db, index_code, trade_date, index_type = 'index'):
         conn.close()
 
 
+def get_batch_index_penalty_rates(db, code_type_list, trade_date):
+    if not code_type_list:
+        return {}
+
+    conn = db.get_connection()
+    result = {}
+    try:
+        # 按 type 分组，减少 SQL 复杂度
+        type_groups = {}
+        for code, idx_type in code_type_list:
+            type_groups.setdefault(idx_type, []).append(code)
+
+        with conn.cursor() as cursor:
+            for idx_type, codes in type_groups.items():
+                format_strings = ','.join(['%s'] * len(codes))
+                sql = f"""
+                    SELECT index_code, penalty_rate 
+                    FROM index_daily_history 
+                    WHERE index_code IN ({format_strings}) AND trade_date = %s AND type = %s
+                """
+                params = tuple(codes) + (trade_date, idx_type)
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+                for row in rows:
+                    idx_code = row['index_code'] if isinstance(row, dict) else row[0]
+                    penalty_val = row['penalty_rate'] if isinstance(row, dict) else row[1]
+                    result[idx_code] = float(penalty_val) if penalty_val is not None else 0.0
+
+        # 对查不到的 code 兜底为 0.0，并打印警告（保持原有逻辑）
+        for code, idx_type in code_type_list:
+            if code not in result:
+                alert_msg = (
+                    f"⚠️ 【风控降级警告】未找到 [{code}] 在 [{trade_date}] 的历史惩罚值！\n"
+                    f"-> 原因可能为：昨晚盘后批处理未执行、该指数为今日新增、或第三方数据完全丢失。\n"
+                    f"-> 系统动作：已强行按 0.0 兜底返回，该标的今日将不带历史超额惩罚参与交易！"
+                )
+                print(alert_msg)
+                result[code] = 0.0
+
+    except Exception as e:
+        print(f"❌ 批量查询惩罚值时发生致命异常: {e}，未查到的强行按 0.0 兜底！")
+        for code, idx_type in code_type_list:
+            if code not in result:
+                result[code] = 0.0
+    finally:
+        conn.close()
+
+    return result
+
+
 def get_index_pre_close(db_pool, trade_date):
     conn = db_pool.get_connection()
     if not conn:
