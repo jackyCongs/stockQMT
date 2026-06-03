@@ -155,6 +155,9 @@ class IndexMqGateway:
                 })
 
             if batch_payload:
+                now = datetime.now()
+                if now.hour == 9 and 25 <= now.minute <= 29:
+                    logger.info(f"NMQ payload at {now.strftime('%H:%M:%S')}: {json.dumps(batch_payload, ensure_ascii=False)}")
                 self.mq_client.publish(
                     topic="alphacore/tick/batch",
                     payload=json.dumps(batch_payload),
@@ -187,11 +190,15 @@ class IndexMqGateway:
                 "a": float(snapshot.get("Amount", 0)),
                 "t": now_ms
             }]
-            self.mq_client.publish(
-                topic="alphacore/tick/batch",
-                payload=json.dumps(batch_payload),
-                qos=0
-            )
+            if batch_payload:
+                now = datetime.now()
+                if now.hour == 9 and 25 <= now.minute <= 29:
+                    logger.info(f"NMQ payload at {now.strftime('%H:%M:%S')}: {json.dumps(batch_payload, ensure_ascii=False)}")
+                self.mq_client.publish(
+                    topic="alphacore/tick/batch",
+                    payload=json.dumps(batch_payload),
+                    qos=0
+                )
         except Exception as e:
             logger.error(f"处理北交所 TQ 行情回调异常: {e}")
 
