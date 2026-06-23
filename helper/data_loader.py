@@ -51,7 +51,8 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
 
             if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d"):
                 logger.warning(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
-                net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
+                if inner_etf_type == 'lof':
+                    net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
