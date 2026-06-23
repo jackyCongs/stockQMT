@@ -21,7 +21,7 @@ rest_index_push_count = 0
 class Strategy1:
     def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
         # 预留的钱雷打不动，用来提出
-        self.frozen_money = 0
+        self.frozen_money = 30000
         # 等待被初始化的全局场内基金
         self.inner_stock_infos = {}
         # 等待被初始化的全局指数
@@ -29,7 +29,7 @@ class Strategy1:
         # 上一个交易日
         self.yesterday = data_loader.get_previous_date()
         # 单笔最大买入金额
-        self.max_bid_money = 14000
+        self.max_bid_money = 7000
         self.min_bid_money = 500
         self.base_premium_threshold = 0.25
         self.db = db
@@ -308,7 +308,10 @@ class Strategy1:
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
         # premium符合要求，并且委卖大于最小买入金额，并且已经持有的金额不超过最大限制，维护到双向链表队列中
-        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (
+        estimate_position_rate = Decimal(0.93)
+        if index_info['increase_rate'] < 0:
+            estimate_position_rate = Decimal(0.95)
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] * estimate_position_rate) * (
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
         index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
@@ -329,6 +332,12 @@ class Strategy1:
         else:
             self.sell_queue.remove_stock(stock_code)
 
+
+        estimate_position_rate = Decimal(0.93)
+        if index_info['increase_rate'] > 0:
+            estimate_position_rate = Decimal(0.95)
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] * estimate_position_rate) * (
+                    Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         # 计算委买的，买一大于200元、持有数量大于0的，才能进入队列
         buy_premium = Decimal(round((Decimal(stock_info['bidPrice'][0]) - appraisal) / Decimal(appraisal) * Decimal(100), 4))
         buy_premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])

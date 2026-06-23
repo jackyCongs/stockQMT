@@ -146,9 +146,23 @@ class IndexMqGateway:
                 if not tick_data:
                     continue
 
+                price = tick_data.get("lastPrice", 0)
+                if price <= 0:
+                    price = tick_data.get("lastClose", 0)
+                    if price <= 0:
+                        logger.critical(
+                            f"[致命] QMT行情 {stock_code} 实时价格与昨收价均为0，数据源异常！程序立即终止！"
+                        )
+                        self.mq_client.disconnect()
+                        os._exit(1)
+                    else:
+                        logger.warning(
+                            f"[Fallback] QMT行情 {stock_code} 实时价格为0，已替换为昨收价: {price}"
+                        )
+
                 batch_payload.append({
                     "c": stock_code,
-                    "p": tick_data.get("lastPrice", 0),
+                    "p": price,
                     "v": tick_data.get("volume", 0),
                     "a": tick_data.get("amount", 0),
                     "t": tick_data.get("time", 0)
@@ -182,10 +196,25 @@ class IndexMqGateway:
             if not snapshot:
                 return
 
+            price = float(snapshot.get("Now", 0))
+            if price <= 0:
+                price = float(snapshot.get("LastClose", 0))
+                if price <= 0:
+                    logger.critical(
+                        f"[致命] 北交所TQ行情 {stock_code} 实时价格与昨收价均为0，数据源异常！程序立即终止！"
+                    )
+                    self.mq_client.disconnect()
+                    os._exit(1)
+                else:
+                    pass
+                    # logger.warning(
+                    #     f"[Fallback] 北交所TQ行情 {stock_code} 实时价格为0，已替换为昨收价: {price}"
+                    # )
+
             now_ms = int(time.time() * 1000)
             batch_payload = [{
                 "c": stock_code,
-                "p": float(snapshot.get("Now", 0)),
+                "p": price,
                 "v": int(snapshot.get("Volume", 0)),
                 "a": float(snapshot.get("Amount", 0)),
                 "t": now_ms

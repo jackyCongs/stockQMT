@@ -31,7 +31,7 @@ class Strategy2:
         # 单个股票最大可以持仓多少钱
         self.max_single_amount = 2200
         # 每次出价最低多少钱
-        self.min_bid_amount = 100
+        self.min_bid_amount = 1
 
         self.base_premium_threshold = 0.3
         self.strategy_name = "ETF策略"

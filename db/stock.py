@@ -76,6 +76,7 @@ def get_unique_index_codes(db):
               AND is_etf = 1 
               AND target_worth_url IS NOT NULL 
               AND target_worth_url != ''
+              and target_worth_url not like 'H%'
         """
         cursor.execute(query)
         rows = cursor.fetchall()
