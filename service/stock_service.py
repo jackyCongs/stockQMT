@@ -322,6 +322,8 @@ class StockService:
             logger.error(alert_msg)
         # 计算惩罚值
         self.calculate_and_save_daily_penalty(self.trade_date)
+        # 计算动态 Beta 仓位系数
+        self.calculate_and_save_rolling_betas(self.trade_date)
 
     def calculate_and_save_daily_penalty(self, trade_date):
         """
@@ -370,6 +372,105 @@ class StockService:
             logger.error(f"计算历史惩罚值失败: {e}")
             conn.rollback()
         finally:
+            conn.close()
+
+    def calculate_and_save_rolling_betas(self, trade_date):
+        """
+        盘后自动运行：基于过去90天历史数据（取至少60天有效交易日），动态计算并更新每个LOF基金的Beta仓位系数，写入数据库
+        """
+        import pandas as pd
+        logger.info("开始计算并更新所有标的的动态 Beta 仓位系数...")
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 1. 确保 stock 表中有 beta 字段
+            try:
+                cursor.execute("ALTER TABLE stock ADD COLUMN beta DECIMAL(6,4) DEFAULT 1.0000;")
+                conn.commit()
+                logger.info("成功为 stock 表添加 beta 字段！")
+            except Exception as alter_err:
+                pass
+
+            # 2. 查询所有 status = 1 并且 target_worth_url 不为空的 LOF 基金
+            cursor.execute("""
+                SELECT code, target_worth_url 
+                FROM stock 
+                WHERE inner_etf_type = 'lof' AND target_worth_url IS NOT NULL AND target_worth_url != '' AND status = 1;
+            """)
+            lof_funds = cursor.fetchall()
+            
+            if not lof_funds:
+                logger.info("未找到需要计算 Beta 的标的。")
+                return
+
+            update_data = []
+            for code, idx_url in lof_funds:
+                stock_code = str(code).strip().zfill(6)
+                idx_code = str(idx_url).strip().zfill(6)
+                
+                # 获取过去 90 天的历史数据以确保能提取到足够交易日
+                cursor.execute("""
+                    SELECT date, accumulated_net_worth 
+                    FROM stock_daily_nav 
+                    WHERE stock_code = %s AND accumulated_net_worth IS NOT NULL AND accumulated_net_worth > 0
+                    ORDER BY date DESC
+                    LIMIT 90;
+                """, (stock_code,))
+                nav_rows = cursor.fetchall()
+                
+                cursor.execute("""
+                    SELECT trade_date, close_price, pre_close 
+                    FROM index_daily_history 
+                    WHERE index_code = %s AND pre_close > 0
+                    ORDER BY trade_date DESC
+                    LIMIT 90;
+                """, (idx_code,))
+                idx_rows = cursor.fetchall()
+                
+                if not nav_rows or not idx_rows:
+                    continue
+                
+                # 倒序排列以正确计算百分比收益率
+                df_nav = pd.DataFrame(nav_rows, columns=['date', 'nav'])
+                df_nav['date'] = pd.to_datetime(df_nav['date']).dt.strftime('%Y-%m-%d')
+                df_nav = df_nav.sort_values('date')
+                df_nav['nav_return'] = df_nav['nav'].astype(float).pct_change()
+                
+                df_idx = pd.DataFrame(idx_rows, columns=['date', 'close', 'pre_close'])
+                df_idx['date'] = pd.to_datetime(df_idx['date']).dt.strftime('%Y-%m-%d')
+                df_idx = df_idx.sort_values('date')
+                df_idx['idx_return'] = (df_idx['close'].astype(float) - df_idx['pre_close'].astype(float)) / df_idx['pre_close'].astype(float)
+                
+                # 对齐
+                df_merged = pd.merge(df_nav[['date', 'nav_return']], df_idx[['date', 'idx_return']], on='date').dropna()
+                
+                beta = 0.93 # 默认缺省值
+                if len(df_merged) >= 15:
+                    df_merged['nav_return'] = df_merged['nav_return'].astype(float)
+                    df_merged['idx_return'] = df_merged['idx_return'].astype(float)
+                    
+                    cov_val = df_merged['idx_return'].cov(df_merged['nav_return'])
+                    var_idx = df_merged['idx_return'].var()
+                    
+                    if var_idx > 0:
+                        calculated_beta = cov_val / var_idx
+                        # 对 Beta 范围做合理约束，防止异常数据导致极端值
+                        if 0.3 <= calculated_beta <= 1.5:
+                            beta = calculated_beta
+                            
+                update_data.append((round(beta, 4), stock_code))
+                
+            # 3. 批量更新到 stock 表
+            if update_data:
+                cursor.executemany("UPDATE stock SET beta = %s WHERE code = %s;", update_data)
+                conn.commit()
+                logger.info(f"成功更新了 {len(update_data)} 个标的的动态 Beta 仓位系数！")
+                
+        except Exception as e:
+            logger.error(f"计算动态 Beta 失败: {e}")
+            conn.rollback()
+        finally:
+            cursor.close()
             conn.close()
 
     def indices_handler(self, msgs):

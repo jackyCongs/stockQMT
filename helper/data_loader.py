@@ -62,6 +62,7 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
                 'last_net_worth': Decimal(net_worth['net_worth']),
                 'last_net_worth_date': net_worth['net_worth_date'],
                 'withdraw_commission_7rate': Decimal(stock['withdraw_commission_7rate'] / 100),
+                'beta': Decimal(str(stock.get('beta', 0.93) or 0.93)),
                 'target_index': stock['target_worth_url'],
                 'hold_status': 0,
                 'hold_num': 0,

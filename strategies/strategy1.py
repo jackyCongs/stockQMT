@@ -308,7 +308,10 @@ class Strategy1:
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
         # premium符合要求，并且委卖大于最小买入金额，并且已经持有的金额不超过最大限制，维护到双向链表队列中
-        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (
+        beta_val = stock_info.get('beta', Decimal('1.0'))
+        if beta_val is None:
+            beta_val = Decimal('0.93')
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] * beta_val) * (
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
         index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
