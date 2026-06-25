@@ -140,6 +140,8 @@ class Strategy1:
                     'data': msgs[code],
                     'status': True,
                 })
+                for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:
+                    self.analysis_and_decision_mking(stock_code, msgs[code])
         except Exception as e:
             logger.exception(f"Stock Index handler CRASHED: {e}")
             notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, index_handler中发生致命错误: {str(e)[:200]},\n请立即处理")
@@ -225,10 +227,10 @@ class Strategy1:
                     logger.error(f"index{stock_info['target_index']} 更新时间异常，{get_time() - index_info['timestamp']}秒未更新")
                     self.buy_queue.remove_stock(stock_code)
                     logger.info(index_info)
-                if get_time() - stock_info['timestamp'] >= 60:
+                if get_time() - stock_info['timestamp'] >= 600:
                     logger.error(f"stock{stock_code} 更新时间异常，{get_time() - stock_info['timestamp']}秒未更新")
                     self.buy_queue.remove_stock(stock_code)
-                    logger.info(stock_info)
+                    # logger.info(stock_info)
                 return None
             # 维护两个队列
             self.maintain_premium_queues(stock_code, stock_info, index_info)

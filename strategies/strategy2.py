@@ -102,10 +102,10 @@ class Strategy2:
                         logger.error(f"etf更新时间异常，{get_time() - self.realtime_iopv_infos[utils.purified_code(code)]['timestamp']}秒未更新")
                         self.premium_manager.buy_queue.remove_stock(code)
                         logger.info(self.realtime_iopv_infos[utils.purified_code(code)])
-                    if get_time() - stock_info['timestamp'] >= 60:
+                    if get_time() - stock_info['timestamp'] >= 600:
                         logger.error(f"stock{code} 更新时间异常，{get_time() - stock_info['timestamp']}秒未更新")
                         self.premium_manager.buy_queue.remove_stock(code)
-                        logger.info(stock_info)
+                        # logger.info(stock_info)
                     continue
                 if stock_info['last_net_worth_date'] != self.yesterday:
                     logger.warning(f"last_net_worth_date异常: {stock_info['last_net_worth_date']} - {self.yesterday}")
