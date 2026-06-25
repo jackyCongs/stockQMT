@@ -21,16 +21,14 @@ MARKET_TIMES = {
 
 def enhance_stock_code(code, type='stock', ignore_warning = False):
     if type == 'index':
-        if code.startswith('H') or code.startswith('000') or code.startswith('9'):
+        if code.startswith('H'):
+            return f"{code}.SH"
+        if code.startswith('000'):
             return f"{code}.SH"
         if code.startswith('399'):
-            code_int = int(code)
-            if code_int >= 399800:
-                return f"{code}.SH"
-            CSI_3997XX_WHITELIST = {399706, 399707}
-            if code_int in CSI_3997XX_WHITELIST:
-                return f"{code}.SH"
             return f"{code}.SZ"
+        if code.startswith("9"):
+            return f"{code}.SH"
         if not ignore_warning:
             logger.warning(f"当前 code: {code}-{type}, 无对应来源")
         return code
@@ -38,11 +36,40 @@ def enhance_stock_code(code, type='stock', ignore_warning = False):
     if len(code) == 6 and (code.startswith('6') or code.startswith('900') or code.startswith('5')):
         return f"{code}.SH"
     # 深证
-    elif len(code) == 6 and (code.startswith('0') or code.startswith('3') or code.startswith('158')
+    elif len(code) == 6 and (code.startswith('00') or code.startswith('3') or code.startswith('158')
                              or code.startswith('159') or code.startswith('16')):
         return f"{code}.SZ"
+    # 北交所
+    elif len(code) == 6 and code.startswith(('8', '4', '92', '93')):
+        return f"{code}.BJ"
+    # 债券等其他品种（国债、企债、转债等）
+    elif len(code) == 6 and code.startswith(('11', '12', '13', '14', '17', '18', '19', '01', '02', '10')):
+        # 简单区分，123/127/128/112 通常是深交所，其余大概率是上交所
+        if code.startswith(('123', '127', '128', '112')):
+            return f"{code}.SZ"
+        return f"{code}.SH"
     logger.warning(f"当前 code: {code}-{type}, 无对应来源")
     return code
+
+def is_normal_a_share(code):
+    """
+    判断一个成分股是否是标准的 A 股正股。
+    排除债券、黄金、港股、美股、基金等。
+    标准A股前缀:
+    - 上海: 60, 68
+    - 深圳: 00, 30
+    - 北交所: 8, 4, 92, 93
+    """
+    code_str = str(code).strip().split('.')[0]
+    if not code_str.isdigit():
+        return False
+        
+    if len(code_str) == 6:
+        if code_str.startswith(('60', '68', '00', '30')):
+            return True
+        if code_str.startswith(('8', '4', '92', '93')):
+            return True
+    return False
 
 def is_target_index(code):
     return enhance_stock_code(purified_code(code), 'index', True) == code

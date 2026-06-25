@@ -153,7 +153,8 @@ class TraderStrategyService:
 
     def to_buy(self, inner_stock_infos, target_index_infos, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = inner_stock_infos[stock_code]
-        index_info = target_index_infos[stock_info['target_index']]
+        index_info = target_index_infos[data_loader.get_group_code(stock_info['target_index'], stock_code)]
+        increase_rate = index_info.get('increase_rate', 0)
         # 卖不用管，买需要加锁，防止重复购买
         logger.info(f"to buy {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         lock = self._get_lock(stock_code)
@@ -228,7 +229,7 @@ class TraderStrategyService:
                     self.processor.submit_task(self.order_buy_thread, stock_code, bid_price, bid_num, stock_info, hold_num, inner_stock_infos, target_index_infos, fresh_holding)
                     logger.info(f"inner_stock_info: {stock_info}")
                     logger.info(f"target_index_info: {index_info}")
-                    logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate']) * 0.95), 4)}")
+                    logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(increase_rate) * 0.95), 4)}")
                     return
                 else:
                     logger.info(f"to buy gives up, bid_num: {bid_num}, bid_price: {bid_price}, bid_money: {bid_money}")
@@ -241,13 +242,13 @@ class TraderStrategyService:
 
     def to_sell(self, inner_stock_infos, target_index_infos, stock_code, limit_price, appraisal, fresh_holding = True):
         stock_info = inner_stock_infos[stock_code]
-        index_info = target_index_infos[stock_info['target_index']]
+        index_info = target_index_infos[data_loader.get_group_code(stock_info['target_index'], stock_code)]
+        increase_rate = index_info.get('increase_rate', 0)
         logger.info(f"to_sell {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         if len(stock_info['bidPrice']) > 0 and stock_info['hold_can_use_num'] > 0:
             sell_price = stock_info['bidPrice'][0]
             sell_num = 0
             total_money = 0
-            premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])
             premium = 0
             for i, price in enumerate(stock_info['bidPrice']):
                 if price < limit_price:
@@ -268,7 +269,7 @@ class TraderStrategyService:
                 logger.info(f"{stock_code}, 可卖的太少了{total_money}, sell_num: {sell_num}, limit_price: {limit_price}, hold_can_use_num: {stock_info['hold_can_use_num']}")
                 return
             if sell_num > 0 and sell_price > 0 and stock_info['hold_can_use_num'] > 0:
-                remark = f"卖出日志: {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, 卖出{stock_code}, 指数rate:{index_info['increase_rate']}, premium: {premium}, premium_threshold: {premium_threshold}," \
+                remark = f"卖出日志: {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, 卖出{stock_code}, premium: {premium}," \
                          f"估值{appraisal},报价{sell_price},{sell_num}手, 目前买盘{stock_info['bidPrice']},{stock_info['bidVol']}, 指数{index_info}"
                 logger.info(remark)
                 # 出价以后，把买盘中买一的队列数量进行相应的减掉
@@ -277,7 +278,7 @@ class TraderStrategyService:
                 self.processor.submit_task(self.order_sell_thread, stock_code, sell_price, sell_num, stock_info, inner_stock_infos, target_index_infos, fresh_holding)
                 logger.info(f"inner_stock_info: {stock_info}")
                 logger.info(f"target_index_info: {index_info}")
-                logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(index_info['increase_rate']) * 0.9), 4)}")
+                logger.info(f"参数appraisal: {appraisal}, 实时计算appraisal: {round(float(stock_info['last_net_worth']) * (1 + float(increase_rate) * 0.9), 4)}")
 
     def sell_then_buy(self, inner_stock_infos, target_index_infos, first_buy_queue_node, first_sell_queue_node):
         self.processor.submit_task(self.order_sell_then_buy_thread, inner_stock_infos, target_index_infos, first_buy_queue_node, first_sell_queue_node)

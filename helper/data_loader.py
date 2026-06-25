@@ -51,7 +51,8 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
 
             if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d"):
                 logger.warning(f"【{stock['code']}】今天有分红，每份除权{net_worth['bonus_money']}元")
-                net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
+                if inner_etf_type == 'lof':
+                    net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
             # 如果增强前后值一样，说明是有问题的，直接省略掉
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
@@ -181,23 +182,80 @@ def get_all_target_index_code(inner_stock_infos):
 
 
 def load_target_index(db, inner_stock_infos, target_index_infos, yesterday_date):
+    # 先收集所有去重的 target_index，并统一类型为 'index'
+    unique_target_indices = set(
+        info['target_index'] for info in inner_stock_infos.values() if info.get('target_index')
+    )
+    code_type_list = [(idx_code, 'index') for idx_code in unique_target_indices]
+    
+    # 批量查询所有惩罚值
+    penalty_rates = index_daily_history.get_batch_index_penalty_rates(db, code_type_list, yesterday_date)
+
     pbar = tqdm(total=len(inner_stock_infos), desc="index loading...", mininterval=0.1)
-    for code in inner_stock_infos:
-        if inner_stock_infos[code]['target_index'] not in target_index_infos:
+    for code, info in inner_stock_infos.items():
+        target_idx = info['target_index']
+        if not target_idx:
+            logger.warning(f"load_target_index: {target_idx} 不存在，需要注意")
+            pbar.update(1)
+            continue
+            
+        if target_idx not in target_index_infos:
             relation = [code]
         else:
-            relation = target_index_infos[inner_stock_infos[code]['target_index']]['relation']
+            relation = target_index_infos[target_idx]['relation']
             if code not in relation:
                 relation.append(code)
+                
         # get penalty_rate
-        penalty_rate = index_daily_history.get_index_penalty_rate(db, inner_stock_infos[code]['target_index'], yesterday_date)
-        target_index_infos[inner_stock_infos[code]['target_index']] = {
+        penalty_rate = penalty_rates.get(target_idx, 0.0)
+        target_index_infos[target_idx] = {
             'relation': relation,
             'penalty_rate': penalty_rate,
             'status': False,
         }
         pbar.update(1)
     pbar.close()
+
+
+def load_target_index_for_etf(db, inner_stock_infos, target_index_infos, yesterday_date, strategy_etf_type):
+    # 先收集所有需要查询的 (code, type) 对，一次性批量查询
+    code_type_list = []
+    for code, stock_info in inner_stock_infos.items():
+        purified = utils.purified_code(code)
+        if not stock_info['target_index'] or not stock_info['target_index'].isdigit():
+            # 如果不存在指数，取 etf 自己的惩罚
+            code_type_list.append((purified, strategy_etf_type))
+        else:
+            # 如果 etf 存在关联指数，就取指数的惩罚
+            target_idx = utils.purified_code(stock_info['target_index'])
+            code_type_list.append((target_idx, 'index'))
+
+    # 一次 SQL 查询所有 penalty_rate
+    penalty_rates = index_daily_history.get_batch_index_penalty_rates(db, code_type_list, yesterday_date)
+    
+    for code, stock_info in inner_stock_infos.items():
+        index_code = stock_info.get('target_index', '')
+        purified = utils.purified_code(code)
+        if not stock_info['target_index'] or not stock_info['target_index'].isdigit():
+            # 没有index的，自己先作为一个index的group
+            index_code = purified
+            penalty_rate = penalty_rates.get(purified, 0.0)
+        else:
+            target_idx = stock_info['target_index']
+            penalty_rate = penalty_rates.get(target_idx, 0.0)
+            
+        target_index_infos[index_code] = {
+            #'relation': [code],
+            'penalty_rate': penalty_rate,
+            'status': True,
+            'index_total_market_value': 0.0,
+            #'increase_rate': 0
+        }
+
+def get_group_code(target_index, etf_code):
+    if not target_index or not target_index.isdigit():
+        return utils.purified_code(etf_code)
+    return target_index
 
 
 def get_rest_index(target_index_infos):
@@ -365,21 +423,45 @@ def run_granular_sell_tests():
 # ]
 # 每天收盘时计算，计算结果存到数据库，以追踪的指数为单位
 def calc_daily_excess_volatility_batch(fund_rates, index_rates_list):
-    total_excess_volatility = Decimal('0')
+    """
+    计算超额波动率。
+    - 支持 1~3 天的数据（新加入的标的可能不足3天）
+    - 当有3天数据时，丢弃波动最小的1天，只取波动最大的2天计算
+    - 当只有1~2天数据时，用所有可用天数计算
+    """
+    num_days = len(fund_rates)
+    if num_days == 0:
+        return Decimal('0')
 
-    for i in range(3):
+    # 计算每天的超额波动
+    daily_excess = []
+    for i in range(num_days):
         # 取绝对值
         f_vol = abs(Decimal(str(fund_rates[i])) * Decimal('100'))
 
         # 找出当天三大指数中波动最大的基准值
-        day_idx_vols = [abs(Decimal(str(idx[i])) * Decimal('100')) for idx in index_rates_list]
-        max_idx_vol = max(day_idx_vols)
+        # 需要确保基准指数在该天也有数据
+        valid_idx_vols = []
+        for idx in index_rates_list:
+            if i < len(idx):
+                valid_idx_vols.append(abs(Decimal(str(idx[i])) * Decimal('100')))
 
-        # 累加每天的超额波动
+        if valid_idx_vols:
+            max_idx_vol = max(valid_idx_vols)
+        else:
+            max_idx_vol = Decimal('0')
+
+        # 当天的超额波动
         excess_vol = max(Decimal('0'), f_vol - max_idx_vol)
-        total_excess_volatility += excess_vol
+        daily_excess.append(excess_vol)
 
-    return total_excess_volatility
+    if num_days >= 3:
+        # 丢弃波动最小的1天，只取波动最大的2天
+        daily_excess.sort(reverse=True)
+        daily_excess = daily_excess[:2]
+
+    # 返回所选天数的超额波动总和
+    return sum(daily_excess)
 
 
 def get_penalty(db_excess_volatility):
@@ -387,7 +469,7 @@ def get_penalty(db_excess_volatility):
     excess_vol = Decimal(str(db_excess_volatility))
 
     # 静态规则与参数 (O(1) 极速计算)
-    tolerance = Decimal('1.5')
+    tolerance = Decimal('0')
 
     # 如果没超过容忍度，直接 0 消耗返回
     if excess_vol <= tolerance:

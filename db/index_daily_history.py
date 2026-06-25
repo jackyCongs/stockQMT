@@ -68,14 +68,16 @@ def upsert_index_tick(db, index_code: str, tick_data: dict):
         conn.rollback()
 
 
-def batch_upsert_index_history(db, update_data_list):
+def batch_upsert_index_history(db, update_data_list, record_type='index'):
     db_conn = db.get_connection()
     if not update_data_list:
         return
+    
+    new_data_list = [tuple(list(row) + [record_type]) for row in update_data_list]
     sql = """
             INSERT INTO index_daily_history 
-            (index_code, trade_date, close_price, pre_close, open_price, high_price, low_price, volatility_rate, volume, amount, data_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (index_code, trade_date, close_price, pre_close, open_price, high_price, low_price, volatility_rate, volume, amount, data_source, type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE 
             close_price = VALUES(close_price),
             pre_close = VALUES(pre_close),
@@ -86,26 +88,31 @@ def batch_upsert_index_history(db, update_data_list):
             volume = VALUES(volume),
             amount = VALUES(amount),
             data_source = VALUES(data_source),
+            type = VALUES(type),
             update_time = CURRENT_TIMESTAMP
         """
     try:
         with db_conn.cursor() as cursor:
             # 使用 executemany 进行极速批量写入
-            cursor.executemany(sql, update_data_list)
+            cursor.executemany(sql, new_data_list)
         db_conn.commit()
     except Exception as e:
         db_conn.rollback()
         exit(f"批量 Upsert 指数历史数据失败: {e}")
 
-def get_updated_index_codes_by_date(db, trade_date):
+def get_updated_index_codes_by_date(db, trade_date, record_type=None):
 # 2. 从数据库查询该日期已存在的去重代码
     conn = db.get_connection()
     actual_codes = set()
     try:
         with conn.cursor() as cursor:
             # 这里的 index_code 建议根据你数据库存的是带后缀还是不带后缀来微调
-            sql = "SELECT index_code FROM index_daily_history WHERE trade_date = %s"
-            cursor.execute(sql, (trade_date,))
+            if record_type:
+                sql = "SELECT index_code FROM index_daily_history WHERE trade_date = %s AND type = %s"
+                cursor.execute(sql, (trade_date, record_type))
+            else:
+                sql = "SELECT index_code FROM index_daily_history WHERE trade_date = %s"
+                cursor.execute(sql, (trade_date,))
             rows = cursor.fetchall()
             actual_codes = set([row[0] for row in rows])
     except Exception as e:
@@ -125,8 +132,8 @@ def get_3_days_history_list(db, trade_date):
             """
             cursor.execute(date_sql, (trade_date,))
             dates = [row[0] for row in cursor.fetchall()]
-            if len(dates) < 3:
-                print("历史交易日不足3天，无法计算惩罚值")
+            if len(dates) == 0:
+                print("无任何历史交易日数据，无法计算惩罚值")
                 return None
             dates.sort()
             # 升序排列：[T-2, T-1, T0]
@@ -167,16 +174,16 @@ def update_penalty_data(db, update_penalty_data):
         conn.close()
 
 
-def get_index_penalty_rate(db, index_code, trade_date):
+def get_index_penalty_rate(db, index_code, trade_date, index_type = 'index'):
     conn = db.get_connection()
     try:
         with conn.cursor() as cursor:
             sql = """
                 SELECT penalty_rate 
                 FROM index_daily_history 
-                WHERE index_code = %s AND trade_date = %s
+                WHERE index_code = %s AND trade_date = %s and type = %s
             """
-            cursor.execute(sql, (index_code, trade_date))
+            cursor.execute(sql, (index_code, trade_date, index_type))
             row = cursor.fetchone()
             if row is not None:
                 return float(row[0])
@@ -198,5 +205,128 @@ def get_index_penalty_rate(db, index_code, trade_date):
         # 防止数据库突然断连导致盘中主线程崩溃
         print(f"❌ 查询 [{index_code}] 惩罚值时发生致命异常: {e}，强行按 0.0 兜底！")
         return 0.0
+    finally:
+        conn.close()
+
+
+def get_batch_index_penalty_rates(db, code_type_list, trade_date):
+    if not code_type_list:
+        return {}
+
+    conn = db.get_connection()
+    result = {}
+    try:
+        # 按 type 分组，减少 SQL 复杂度
+        type_groups = {}
+        for code, idx_type in code_type_list:
+            type_groups.setdefault(idx_type, []).append(code)
+
+        with conn.cursor() as cursor:
+            for idx_type, codes in type_groups.items():
+                format_strings = ','.join(['%s'] * len(codes))
+                sql = f"""
+                    SELECT index_code, penalty_rate 
+                    FROM index_daily_history 
+                    WHERE index_code IN ({format_strings}) AND trade_date = %s AND type = %s
+                """
+                params = tuple(codes) + (trade_date, idx_type)
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+                for row in rows:
+                    idx_code = row['index_code'] if isinstance(row, dict) else row[0]
+                    penalty_val = row['penalty_rate'] if isinstance(row, dict) else row[1]
+                    result[idx_code] = float(penalty_val) if penalty_val is not None else 0.0
+
+        # 对查不到的 code 兜底为 0.0，并打印警告（保持原有逻辑）
+        for code, idx_type in code_type_list:
+            if code not in result:
+                alert_msg = (
+                    f"⚠️ 【风控降级警告】未找到 [{code}] 在 [{trade_date}] 的历史惩罚值！\n"
+                    f"-> 原因可能为：昨晚盘后批处理未执行、该指数为今日新增、或第三方数据完全丢失。\n"
+                    f"-> 系统动作：已强行按 0.0 兜底返回，该标的今日将不带历史超额惩罚参与交易！"
+                )
+                print(alert_msg)
+                result[code] = 0.0
+
+    except Exception as e:
+        print(f"❌ 批量查询惩罚值时发生致命异常: {e}，未查到的强行按 0.0 兜底！")
+        for code, idx_type in code_type_list:
+            if code not in result:
+                result[code] = 0.0
+    finally:
+        conn.close()
+
+    return result
+
+
+def get_index_pre_close(db_pool, trade_date):
+    conn = db_pool.get_connection()
+    if not conn:
+        return {}
+
+    pre_close_map = {}
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT index_code, close_price 
+                FROM index_daily_history 
+                WHERE trade_date = %s
+            """
+            cursor.execute(sql, (trade_date,))
+            rows = cursor.fetchall()
+
+            for row in rows:
+                # 【核心修复】加入游标类型兼容装甲：无论是字典游标还是元组游标，统统拿下！
+                idx_code = row['index_code'] if isinstance(row, dict) else row[0]
+                close_px = row['close_price'] if isinstance(row, dict) else row[1]
+
+                pre_close_map[idx_code] = float(close_px)
+
+        return pre_close_map
+    except Exception as e:
+        # 这里建议用 print 打印具体错误，而不是直接 exit(e) 把整个主程序杀掉
+        print(f"提取指数昨收点位失败: {e}")
+        return {}
+    finally:
+        conn.close()
+
+def get_etf_target_index_pre_close(db_pool, etf_codes: list, trade_date: str):
+    conn = db_pool.get_connection()
+    if not conn or not etf_codes:
+        return {}
+
+    result_map = {}
+    try:
+        with conn.cursor() as cursor:
+            format_strings = ','.join(['%s'] * len(etf_codes))
+            sql = f"""
+                select s.name as etf_name, s.code as etf_code, i.index_code, i.close_price as index_pre_price 
+                from stock as s 
+                left join index_daily_history as i on s.target_worth_url = i.index_code 
+                where s.code in ({format_strings}) and i.trade_date = %s
+            """
+            params = tuple(etf_codes) + (trade_date,)
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                if isinstance(row, dict):
+                    etf_code = row['etf_code']
+                    index_code = row['index_code']
+                    index_pre_price = row['index_pre_price']
+                else:
+                    etf_code = row[1]
+                    index_code = row[2]
+                    index_pre_price = row[3]
+
+                result_map[str(etf_code)] = {
+                    "index_code": index_code,
+                    "index_pre_price": float(index_pre_price) if index_pre_price is not None else 0.0
+                }
+
+        return result_map
+    except Exception as e:
+        print(f"❌️ 提取 ETF 目标指数昨收点位失败: {e}")
+        return {}
     finally:
         conn.close()

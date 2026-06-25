@@ -158,17 +158,17 @@ class TransFlows:
                         print(float(self.available_balance))
                         continue
                     # 正常交易
-                    self.check_common_transaction(row['成交数量'], row['成交价格'], row['手续费'], row['成交金额'], row['资金余额'])
+                    commission_dec = self._to_decimal(row['手续费'] + row['其它杂费'] + row['印花税'])
+                    self.check_common_transaction(row['成交数量'], row['成交价格'], commission_dec, row['成交金额'], row['资金余额'])
 
                     num_dec = self._to_decimal(row['成交数量'])
                     price_dec = self._to_decimal(row['成交价格'])
-                    commission_dec = self._to_decimal(row['手续费'])
                     amount_changed = -self._round_money(self._round_money(num_dec * price_dec) + commission_dec)
                     insert_date = {"stock_code": row['证券代码'], "stock_name": row['证券名称'],
                                    "type": '证券' + row['操作'],
                                    "num": row['成交数量'],
                                    "price": row['成交价格'],
-                                   "commission": row['手续费'], "other_fee": 0,
+                                   "commission": commission_dec, "other_fee": 0,
                                    "amount_changed": float(amount_changed),
                                    "remained_amount": row['资金余额'], "trans_date": row['日期'],
                                    "platform": self.platform,

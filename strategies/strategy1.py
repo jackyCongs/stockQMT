@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 rest_index_push_count = 0
 
 class Strategy1:
-    def __init__(self, db, trader_service, platform, cookie):
+    def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
         # 预留的钱雷打不动，用来提出
-        self.frozen_money = 0
+        self.frozen_money = 30000
         # 等待被初始化的全局场内基金
         self.inner_stock_infos = {}
         # 等待被初始化的全局指数
@@ -29,7 +29,7 @@ class Strategy1:
         # 上一个交易日
         self.yesterday = data_loader.get_previous_date()
         # 单笔最大买入金额
-        self.max_bid_money = 14000
+        self.max_bid_money = 7000
         self.min_bid_money = 500
         self.base_premium_threshold = 0.25
         self.db = db
@@ -50,6 +50,8 @@ class Strategy1:
         self.trader_strategy_service = trader_services.TraderStrategyService(platform, self.min_bid_money, self.max_bid_money, self.frozen_money, trader_service,self.strategy_name)
         self.watchdog = WatchdogService()
         self.spider_cookie = cookie
+        self.realtime_iopv_infos = realtime_iopv_infos
+
     def _get_lock(self, stock_code):
         # 如果stock_code对应的锁不存在，则创建一个新的锁
         if stock_code not in self.locks:
@@ -63,8 +65,8 @@ class Strategy1:
 
         SId1 = xtdata.subscribe_whole_quote(data_loader.get_all_inner_stocks_code(self.db, self.strategy_etf_type), callback=self.stock_handler)
         SId2 = xtdata.subscribe_whole_quote(data_loader.get_all_target_index_code(self.inner_stock_infos), callback=self.index_handler)
-        self.watchdog.register("s1_stock", 180, "策略1-stock行情")
-        self.watchdog.register("s1_index", 180, "策略1-index行情")
+        self.watchdog.register("s1_stock", 30, "策略1-stock行情")
+        self.watchdog.register("s1_index", 30, "策略1-index行情")
         self.watchdog.start()
 
         logger.info(f"策略1启动，订阅成功: SId1-{SId1}, SId2-{SId2}\r")
@@ -76,8 +78,8 @@ class Strategy1:
         logger.info(f"total target index nums: {len(self.target_index_infos)}")
         logger.info(f"rest_index_codes nums: {len(rest_index_codes)}, {rest_index_codes}")
         # 异步多线程通过第三方订阅没有检测到的指数信息
-        self.subscribe_rest_index_stock(rest_index_codes)
-        time.sleep(10)
+        # self.subscribe_rest_index_stock(rest_index_codes)
+        # time.sleep(10)
         self.completed_loading = True
         # 开个线程定时刷新持仓
         threading.Thread(target=data_loader.interval_fresh_holding, args=(self.inner_stock_infos, self.target_index_infos, self.trader_service)).start()
@@ -138,6 +140,8 @@ class Strategy1:
                     'data': msgs[code],
                     'status': True,
                 })
+                for stock_code in self.target_index_infos[utils.purified_code(code)]['relation']:
+                    self.analysis_and_decision_mking(stock_code, msgs[code])
         except Exception as e:
             logger.exception(f"Stock Index handler CRASHED: {e}")
             notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, index_handler中发生致命错误: {str(e)[:200]},\n请立即处理")
@@ -204,9 +208,10 @@ class Strategy1:
             # 双方未就绪，不处理
             if index_info['status'] == False or stock_info['status'] == False:
                 if self.completed_loading:
-                    logger.warning(f"状态未就绪:")
-                    logger.warning(stock_info)
-                    logger.warning(index_info)
+                    pass
+                    # logger.warning(f"状态未就绪:")
+                    # logger.warning(stock_info)
+                    # logger.warning(index_info)
                 return None
 
             if stock_info['last_net_worth_date'] != self.yesterday:
@@ -222,10 +227,10 @@ class Strategy1:
                     logger.error(f"index{stock_info['target_index']} 更新时间异常，{get_time() - index_info['timestamp']}秒未更新")
                     self.buy_queue.remove_stock(stock_code)
                     logger.info(index_info)
-                if get_time() - stock_info['timestamp'] >= 60:
+                if get_time() - stock_info['timestamp'] >= 600:
                     logger.error(f"stock{stock_code} 更新时间异常，{get_time() - stock_info['timestamp']}秒未更新")
                     self.buy_queue.remove_stock(stock_code)
-                    logger.info(stock_info)
+                    # logger.info(stock_info)
                 return None
             # 维护两个队列
             self.maintain_premium_queues(stock_code, stock_info, index_info)
@@ -305,7 +310,10 @@ class Strategy1:
     def maintain_premium_queues(self, stock_code, stock_info, index_info):
         # 计算的委卖的
         # premium符合要求，并且委卖大于最小买入金额，并且已经持有的金额不超过最大限制，维护到双向链表队列中
-        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate']) * (
+        estimate_position_rate = Decimal(0.93)
+        if index_info['increase_rate'] < 0:
+            estimate_position_rate = Decimal(0.95)
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] * estimate_position_rate) * (
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
         index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
@@ -326,6 +334,12 @@ class Strategy1:
         else:
             self.sell_queue.remove_stock(stock_code)
 
+
+        estimate_position_rate = Decimal(0.93)
+        if index_info['increase_rate'] > 0:
+            estimate_position_rate = Decimal(0.95)
+        appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] * estimate_position_rate) * (
+                    Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
         # 计算委买的，买一大于200元、持有数量大于0的，才能进入队列
         buy_premium = Decimal(round((Decimal(stock_info['bidPrice'][0]) - appraisal) / Decimal(appraisal) * Decimal(100), 4))
         buy_premium_threshold = data_loader.get_sell_premium(index_info['increase_rate'])

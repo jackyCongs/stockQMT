@@ -4,16 +4,21 @@ import time
 import traceback
 import logging
 import argparse
+
+from rich.live import Live
 from xtquant import xtdata
 from db.db_pool import DBPool
 from service.stock_service import StockService
 from service.trader_service import TraderService
 from service.trans_flows import TransFlows
-from service.index_snapshot_service import IndexSnapshotSynchronizer
+from service.etf_alphacore_config_service import ETFAlphaCoreConfigService
+from service.index_calculator_service import IndexReplicationCalculator
+from service.index_nanomq_publisher import IndexMqGateway
 from strategies.strategy1 import Strategy1
 from strategies.strategy2 import Strategy2
 from helper.time_utils import get_time
 from helper import log_utils
+import helper.data_loader as data_loader
 
 log_format = '%(asctime)s | %(levelname)s | %(name)s.%(funcName)s:%(lineno)d | %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format, filename='logs/app.log', encoding='utf-8', filemode='a') #, force=True
@@ -36,7 +41,7 @@ if __name__ == '__main__':
     }
     parser = argparse.ArgumentParser(description="StockQMT: Quantitative Trading System Runner")
     # param：-mode
-    parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data")
+    parser.add_argument("-mode", type=str, required=True, choices = ["0", "1", "2", "3", "4", "5"],  help="Execution mode: 0: Trading, 1: Accounting, 2: UPDATE Market Data, 5: Maintain SH ETFs")
     # param：-platform
     parser.add_argument("-platform", type=str, choices=["大同证券", "湘财证券"], help="Target trading platform: 大同证券, 湘财证券")
     # param: -strategy
@@ -56,7 +61,13 @@ if __name__ == '__main__':
                 parser.error(f"Undefined strategy ID: {args.mode}")
             logger.info(f"Starting strategy: {args.s}")
             strategy_class = strategy_map[args.s]
-            strategy_class(db, trader_service, args.platform, fund_spider_cookie).run()
+            realtime_iopv_infos = {}
+            if args.s == "s2":
+                gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
+                gateway.start_gateway()
+                realtime_iopv_infos = gateway.realtime_iopv_infos
+                time.sleep(10)
+            strategy_class(db, trader_service, args.platform, fund_spider_cookie, realtime_iopv_infos).run()
             trader_service.xt_trader.run_forever()
         # mode 1: accounting
         elif args.mode == '1':
@@ -75,7 +86,18 @@ if __name__ == '__main__':
             stock_service.update_index_daily_history(fund_spider_cookie)
             logger.info("Index data update completed...")
         elif args.mode == '3':
-            IndexSnapshotSynchronizer(db).sync_latest_weights()
+            yesterday_date = data_loader.get_previous_date()
+            ETFAlphaCoreConfigService(db, yesterday_date).run()
+            logger.info("=== [AlphaCore] 盘前流水线全部执行完毕，弹药已上膛 ===")
+        elif args.mode == '4':
+            gateway = IndexMqGateway(mq_host='127.0.0.1', mq_port=1883)
+            gateway.start_gateway()
+            xtdata.run()
+        elif args.mode == '5':
+            stock_service = StockService(db)
+            logger.info("开始维护上交所场内ETF数据...")
+            stock_service.maintain_sh_etfs()
+            logger.info("上交所场内ETF数据维护完毕。")
         else:
             logger.info(f"Unknown execution mode: {args.mode}")
     except Exception as e:

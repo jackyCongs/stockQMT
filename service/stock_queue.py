@@ -108,22 +108,18 @@ class PremiumStrategyManager:
     """
     def __init__(self, base_premium_threshold, min_bid_money, max_bid_money):
         # 策略内部维护两个队列，不再需要外部传入,每个指数单独是一组
-        self.sell_queue = {}#StockQueue()
-        self.buy_queue = {}#StockQueue()
+        self.sell_queue = StockQueue()
+        self.buy_queue = StockQueue()
 
         self.base_premium_threshold = base_premium_threshold
         self.min_bid_money = min_bid_money
         self.max_bid_money = max_bid_money
 
-    def update(self, appraisal, stock_code, index_code, stock_info, index_info):
+    def update(self, stock_code, stock_info, index_info, realtime_iopv_info):
         # ------------------------------------------------------------------
         # 1. 维护委卖队列 (Sell Queue)
         # ------------------------------------------------------------------
-        # 计算当前持仓市值
-        # 以指数为组，以组为单位维护住queue
-        if index_code not in self.sell_queue:
-            self.sell_queue[index_code] = StockQueue()
-            self.buy_queue[index_code] = StockQueue()
+        appraisal = realtime_iopv_info['current']
         current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
         should_remove_sell = True  # 默认标记为移除，除非满足特定条件
         index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
@@ -132,7 +128,7 @@ class PremiumStrategyManager:
             # 卖一价有效且小于估值
             if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0] <= appraisal:
                 # 动态计算门槛
-                overheating_penalty = float(data_loader.get_overheating_penalty(index_info['increase_rate']))
+                overheating_penalty = float(data_loader.get_overheating_penalty(realtime_iopv_info['increase_rate']))
                 history_penalty_rate = float(index_info['penalty_rate'])
                 premium_threshold = float(self.base_premium_threshold) + overheating_penalty + history_penalty_rate
 
@@ -141,7 +137,7 @@ class PremiumStrategyManager:
                 if first_premium > 0 and stock_info["askVol"][0] * stock_info["askPrice"][0] * 100 > self.min_bid_money:
                     # 计算权重并更新队列
                     adjusted_premium = first_premium - premium_threshold
-                    self.sell_queue[index_code].upsert_stock(
+                    self.sell_queue.upsert_stock(
                         stock_code,
                         stock_info["name"],
                         stock_info["askVol"][0],
@@ -156,19 +152,19 @@ class PremiumStrategyManager:
                     should_remove_sell = False
 
         if should_remove_sell:
-            self.sell_queue[index_code].remove_stock(stock_code)
+            self.sell_queue.remove_stock(stock_code)
 
         # ------------------------------------------------------------------
         # 2. 维护委买队列 (Buy Queue)
         # ------------------------------------------------------------------
         buy_premium = round((stock_info['bidPrice'][0] - appraisal) / appraisal * 100, 4)
-        buy_premium_threshold = float(data_loader.get_sell_premium(index_info['increase_rate']))
+        buy_premium_threshold = float(data_loader.get_sell_premium(realtime_iopv_info['increase_rate']))
 
         # 逻辑：买一存在 > 0，有持仓可用，买一金额 > 200元
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0 and
                 stock_info['hold_can_use_num'] > 0 and
                 stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200):
-            self.buy_queue[index_code].upsert_stock(
+            self.buy_queue.upsert_stock(
                 stock_code,
                 stock_info["name"],
                 stock_info["bidVol"][0],
@@ -180,60 +176,55 @@ class PremiumStrategyManager:
                 date_utils.get_current_millisecond()
             )
         else:
-            self.buy_queue[index_code].remove_stock(stock_code)
+            self.buy_queue.remove_stock(stock_code)
         # ------------------------------------------------------------------
         # 3. 日志与状态打印
         # ------------------------------------------------------------------
-        self._print_status(index_code, stock_code)
+        self._print_status(stock_code)
 
         # 快收盘的前几分钟，开始每10秒展示实际估值
         if utils.is_going_to_close() and utils.should_print("stock_queue", 10):
-            self.buy_queue[index_code].print_queue()
+            self.buy_queue.print_queue()
 
-    def _print_status(self, index_code, stock_code):
+    def _print_status(self, stock_code):
         is_close = utils.is_going_to_close()
         should_print_normal = utils.should_print("stock_queue", 60)
         should_print_close = is_close and utils.should_print("stock_queue_close", 10)
         if should_print_normal or should_print_close:
             logger.info("********************** 全局队列数据情况 start **********************")
             logger.info(f"当前触发股票: {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-            all_sell_nodes = []
-            for q in self.sell_queue.values():
-                curr = q.head
-                while curr:
-                    all_sell_nodes.append(curr)
-                    curr = curr.next
-            all_sell_nodes.sort(key=lambda x: x.premium, reverse=True)
             sell_logs = ["\r\n--- 全局 Sell 队列  ---"]
-            for node in all_sell_nodes[:5]:
-                real_premium_pct = round((node.appraisal - node.price) / node.price * 100, 4)
-                amount = round(node.price * node.quantity * 100, 2)
-                update_time_str = date_utils.transfer_time(node.update_time)
+            curr = self.sell_queue.head
+            sell_count = 0
+            while curr and sell_count < 5:
+                real_premium_pct = round((curr.appraisal - curr.price) / curr.price * 100, 4)
+                amount = round(curr.price * curr.quantity * 100, 2)
+                update_time_str = date_utils.transfer_time(curr.update_time)
                 sell_logs.append(
-                    f"[{node.code}] {node.name}, 估值: {node.appraisal}, "
-                    f"卖一报价: {round(node.price, 4)}, 折价率: {real_premium_pct}%, "
-                    f"premium权重: {node.premium}, 更新时间: {update_time_str}, 金额 {amount}, 历史惩罚: {node.history_penalty_rate}, 过热惩罚: {node.overheating_penalty}"
+                    f"[{curr.code}] {curr.name}, 估值: {curr.appraisal}, "
+                    f"卖一报价: {round(curr.price, 4)}, 折价率: {real_premium_pct}%, "
+                    f"premium权重: {curr.premium}, 更新时间: {update_time_str}, 金额 {amount}, 历史惩罚: {curr.history_penalty_rate}, 过热惩罚: {curr.overheating_penalty}"
                 )
+                curr = curr.next
+                sell_count += 1
 
-            all_buy_nodes = []
-            for q in self.buy_queue.values():
-                curr = q.head
-                while curr:
-                    all_buy_nodes.append(curr)
-                    curr = curr.next
-            all_buy_nodes.sort(key=lambda x: x.premium, reverse=True)
             buy_logs = ["\r\n--- 全局 Buy 队列 ---"]
-            for node in all_buy_nodes:
-                real_premium_pct = round((node.price - node.appraisal) / node.price * 100, 4)
-                amount = round(node.price * node.quantity * 100, 2)
-                update_time_str = date_utils.transfer_time(node.update_time)
+            curr = self.buy_queue.head
+            buy_count = 0
+            while curr:
+                real_premium_pct = round((curr.price - curr.appraisal) / curr.price * 100, 4)
+                amount = round(curr.price * curr.quantity * 100, 2)
+                update_time_str = date_utils.transfer_time(curr.update_time)
                 buy_logs.append(
-                    f"[{node.code}] {node.name}, 估值: {node.appraisal}, "
-                    f"买一报价: {round(node.price, 4)}, 折价率: {real_premium_pct}%, "
-                    f"premium权重: {node.premium}, 更新时间: {update_time_str}, 金额 {amount}"
+                    f"[{curr.code}] {curr.name}, 估值: {curr.appraisal}, "
+                    f"买一报价: {round(curr.price, 4)}, 折价率: {real_premium_pct}%, "
+                    f"premium权重: {curr.premium}, 更新时间: {update_time_str}, 金额 {amount}"
                 )
-            if len(all_sell_nodes) > 0:
+                curr = curr.next
+                buy_count += 1
+
+            if sell_count > 0:
                 logger.info("\n".join(sell_logs))
-            if len(all_buy_nodes) > 0:
+            if buy_count > 0:
                 logger.info("\n".join(buy_logs))
             logger.info("********************** 全局队列数据情况 end **********************")
