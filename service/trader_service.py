@@ -143,6 +143,7 @@ class TraderStrategyService:
         self.trader_service = trader_service
         self.strategy_name = strategy_name
         self.processor = adaptive_task_processor.AdaptiveTaskProcessor()
+        self.active_sell_orders = {}
 
     def _get_lock(self, stock_code):
         # 如果stock_code对应的锁不存在，则创建一个新的锁
@@ -355,5 +356,135 @@ class TraderStrategyService:
         except Exception as e:
             logger.exception(f"order_sell_then_buy_thread CRASHED: {e}")
             notifier.send_telegram_alert("报警", f"{self.strategy_name}策略, handler中发生致命错误: {str(e)[:200]},\n请立即处理")
+        finally:
+            lock.release()
+
+    def get_active_sell_order_details(self, stock_code):
+        order_id = self.active_sell_orders.get(stock_code)
+        if not order_id:
+            return None
+        try:
+            order = self.trader_service.query_by_order_id(int(order_id))
+            if order:
+                if order.order_status in [
+                    xtconstant.ORDER_UNSUBMITTED,
+                    xtconstant.ORDER_SUBMITTED,
+                    xtconstant.ORDER_PART_SUCCEEDED,
+                    xtconstant.ORDER_CANCEILING
+                ]:
+                    return order
+        except Exception as e:
+            logger.error(f"查询挂单详情异常 {order_id}: {e}")
+        self.active_sell_orders.pop(stock_code, None)
+        return None
+
+    def cancel_and_wait(self, code, order_id):
+        logger.info(f"开始撤销挂单 {order_id} 代码: {code}")
+        self.trader_service.cancel(order_id)
+        t_start = time.perf_counter()
+        while time.perf_counter() - t_start < 1.5:
+            order = self.trader_service.query_by_order_id(int(order_id))
+            if order:
+                if order.order_status in [
+                    xtconstant.ORDER_CANCELED,
+                    xtconstant.ORDER_PART_CANCELED,
+                    xtconstant.ORDER_SUCCEEDED,
+                    xtconstant.ORDER_JUNK
+                ]:
+                    logger.info(f"挂单 {order_id} 撤单/结束完成，最终状态: {order.order_status}")
+                    return order
+            time.sleep(0.01)
+        logger.warning(f"等待挂单 {order_id} 撤单超时")
+        return None
+
+    def cancel_and_sell_task(self, code, active_order_id, limit_price, appraisal, stock_info, inner_stock_infos, target_index_infos):
+        lock = self._get_lock(code)
+        if not lock.acquire(blocking=False):
+            logger.info(f"Lock for {code} is already held. Skipping cancel_and_sell_task.")
+            return
+        try:
+            order = self.cancel_and_wait(code, active_order_id)
+            cancelled_lots = 0
+            if order:
+                cancelled_shares = order.order_volume - order.traded_volume
+                cancelled_lots = cancelled_shares // 100
+            else:
+                order = self.trader_service.query_by_order_id(int(active_order_id))
+                if order:
+                    cancelled_shares = order.order_volume - order.traded_volume
+                    cancelled_lots = cancelled_shares // 100
+
+            if cancelled_lots > 0:
+                stock_info['hold_can_use_num'] += cancelled_lots
+                stock_info['hold_num'] += cancelled_lots
+                logger.info(f"撤单后更新本地持仓: 可用={stock_info['hold_can_use_num']}, 总数={stock_info['hold_num']}")
+
+            self.active_sell_orders.pop(code, None)
+
+            if stock_info['hold_can_use_num'] > 0:
+                sell_num = stock_info['hold_can_use_num']
+                self.to_sell(
+                    inner_stock_infos, target_index_infos, code, limit_price, appraisal, True
+                )
+                stock_info['hold_can_use_num'] -= sell_num
+        except Exception as e:
+            logger.exception(f"cancel_and_sell_task 执行异常 {code}: {e}")
+        finally:
+            lock.release()
+
+    def cancel_and_place_active_sell_task(self, code, active_order_id, desired_price, total_available_lots, stock_info, inner_stock_infos):
+        lock = self._get_lock(code)
+        if not lock.acquire(blocking=False):
+            logger.info(f"Lock for {code} is already held. Skipping cancel_and_place_active_sell_task.")
+            return
+        try:
+            order = self.cancel_and_wait(code, active_order_id)
+            cancelled_lots = 0
+            if order:
+                cancelled_shares = order.order_volume - order.traded_volume
+                cancelled_lots = cancelled_shares // 100
+            else:
+                order = self.trader_service.query_by_order_id(int(active_order_id))
+                if order:
+                    cancelled_shares = order.order_volume - order.traded_volume
+                    cancelled_lots = cancelled_shares // 100
+
+            if cancelled_lots > 0:
+                stock_info['hold_can_use_num'] += cancelled_lots
+                stock_info['hold_num'] += cancelled_lots
+                logger.info(f"撤单更新挂单持仓: 可用={stock_info['hold_can_use_num']}, 总数={stock_info['hold_num']}")
+
+            self.active_sell_orders.pop(code, None)
+
+            if stock_info['hold_can_use_num'] > 0:
+                sell_num = stock_info['hold_can_use_num']
+                order_id = self.trader_service.sync_sell(code, desired_price, sell_num, self.strategy_name, inner_stock_infos)
+                if order_id and order_id > 0:
+                    self.active_sell_orders[code] = order_id
+                    stock_info['hold_can_use_num'] -= sell_num
+                    logger.info(f"挂出新主动卖单 {order_id} 价格: {desired_price}, 数量: {sell_num}手. 可用={stock_info['hold_can_use_num']}")
+                else:
+                    logger.error(f"主动卖单挂单失败 {code} 价格: {desired_price}")
+        except Exception as e:
+            logger.exception(f"cancel_and_place_active_sell_task 执行异常 {code}: {e}")
+        finally:
+            lock.release()
+
+    def place_active_sell_task(self, code, desired_price, sell_num, stock_info, inner_stock_infos):
+        lock = self._get_lock(code)
+        if not lock.acquire(blocking=False):
+            logger.info(f"Lock for {code} is already held. Skipping place_active_sell_task.")
+            return
+        try:
+            if stock_info['hold_can_use_num'] >= sell_num and sell_num > 0:
+                order_id = self.trader_service.sync_sell(code, desired_price, sell_num, self.strategy_name, inner_stock_infos)
+                if order_id and order_id > 0:
+                    self.active_sell_orders[code] = order_id
+                    stock_info['hold_can_use_num'] -= sell_num
+                    logger.info(f"成功挂出主动卖单 {order_id} 价格: {desired_price}, 数量: {sell_num}手. 可用={stock_info['hold_can_use_num']}")
+                else:
+                    logger.error(f"主动卖单挂单失败 {code} 价格: {desired_price}")
+        except Exception as e:
+            logger.exception(f"place_active_sell_task 执行异常 {code}: {e}")
         finally:
             lock.release()

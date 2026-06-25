@@ -183,11 +183,11 @@ class IndexMqGateway:
     def _on_bse_hq_callback(self, data_str):
         """通达信 TQ 行情更新回调 - 收到推送后获取快照并转发 MQ"""
         try:
-            self.watchdog.feed("publisher_bse_tick")
             code_info = json.loads(data_str)
             stock_code = code_info.get('Code', '')
             if not stock_code:
                 return
+            self.watchdog.feed(f"publisher_bse_tick_{stock_code}")
 
             if not _tq:
                 logger.error("通达信 TQ SDK 未成功加载！")
@@ -252,7 +252,8 @@ class IndexMqGateway:
         # ① 启动北交所 TQ 行情订阅
         if self.bse_subscribe_list:
             self._start_bse_subscription()
-            self.watchdog.register("publisher_bse_tick", 30, "行情网关-北交所TQ行情")
+            for stock_code in self.bse_subscribe_list:
+                self.watchdog.register(f"publisher_bse_tick_{stock_code}", 30, f"行情网关-北交所TQ-{stock_code}")
 
         # ② 其余股票走 QMT 全推
         if self.subscribe_list:
