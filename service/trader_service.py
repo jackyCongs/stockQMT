@@ -476,7 +476,7 @@ class TraderStrategyService:
             logger.info(f"Lock for {code} is already held. Skipping place_active_sell_task.")
             return
         try:
-            if stock_info['hold_can_use_num'] >= sell_num and sell_num > 0:
+            if stock_info['hold_can_use_num'] >= sell_num > 0:
                 order_id = self.trader_service.sync_sell(code, desired_price, sell_num, self.strategy_name, inner_stock_infos)
                 if order_id and order_id > 0:
                     self.active_sell_orders[code] = order_id

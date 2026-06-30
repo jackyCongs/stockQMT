@@ -113,11 +113,38 @@ def fresh_holding(inner_stock_infos, target_index_infos, holding):
         target_index_infos[index_code]['index_total_market_value'] = index_exposure_agg.get(index_code, 0.0)
     print(f"done fresh holding {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
-def interval_fresh_holding(inner_stock_infos, target_index_infos, trader_service, second=15):
+def recover_active_sell_orders(trader_service, trader_strategy_service):
+    from xtquant import xtconstant
+    try:
+        hangings = trader_service.get_hanging()
+        for order in hangings:
+            if order.strategy_name == trader_strategy_service.strategy_name and order.order_type == xtconstant.STOCK_SELL:
+                trader_strategy_service.active_sell_orders[order.stock_code] = order.order_id
+                logger.info(f"成功恢复已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}, 价格: {order.price}")
+    except Exception as e:
+        logger.error(f"恢复挂单失败: {e}")
+
+def interval_fresh_holding(inner_stock_infos, target_index_infos, trader_service, second=15, trader_strategy_service=None):
+    from xtquant import xtconstant
     while True:
         try:
             current_holding = trader_service.get_holding()
             fresh_holding(inner_stock_infos, target_index_infos, current_holding)
+            
+            # 定时维护并补漏已挂的主动卖单状态，防止内存状态与柜台实盘脱节
+            if trader_strategy_service is not None:
+                try:
+                    hangings = trader_service.get_hanging()
+                    for order in hangings:
+                        # 检查挂单是否属于当前策略，并且是未成交的限价卖单
+                        if order.strategy_name == trader_strategy_service.strategy_name and order.order_type == xtconstant.STOCK_SELL:
+                            # 如果挂单没有被记录在内存字典中，则进行“补漏”登记
+                            if order.stock_code not in trader_strategy_service.active_sell_orders:
+                                trader_strategy_service.active_sell_orders[order.stock_code] = order.order_id
+                                logger.info(f"[定时校验修复] 成功登记漏掉的已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}")
+                except Exception as ex:
+                    logger.error(f"interval_fresh_holding 定时维护挂单异常: {ex}")
+
             time.sleep(second)
         except Exception as e:
             print(f"interval_fresh_holding 处理错误: {e}")

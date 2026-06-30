@@ -19,7 +19,7 @@ print_count_index = 0
 rest_index_push_count = 0
 class Strategy2:
     def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
-        self.frozen_amount = 0
+        self.frozen_amount = 30000
         self.bought_list = {}
         self.stock_list = []
         # 等待被初始化的全局场内基金
@@ -51,7 +51,7 @@ class Strategy2:
 
         self.active_sell_orders = {}
         self.tick_size = 0.001
-        self.active_sell_discount_threshold = 0.5
+        self.active_sell_discount_threshold = 0.4
 
     def _get_lock(self, stock_code):
         # 如果stock_code对应的锁不存在，则创建一个新的锁
@@ -64,17 +64,8 @@ class Strategy2:
         data_loader.load_inner_stock(self.db, self.inner_stock_infos, self.strategy_etf_type)
         data_loader.load_target_index_for_etf(self.db, self.inner_stock_infos, self.target_index_infos, self.yesterday, self.strategy_etf_type)
         data_loader.fresh_holding(self.inner_stock_infos, self.target_index_infos, self.trader_service.get_holding())
-
-        # 启动时恢复挂单状态
-        try:
-            hangings = self.trader_service.get_hanging()
-            for order in hangings:
-                if order.strategy_name == self.strategy_name and order.order_type == xtconstant.STOCK_SELL:
-                    self.trader_strategy_service.active_sell_orders[order.stock_code] = order.order_id
-                    logger.info(f"成功恢复已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}, 价格: {order.price}")
-        except Exception as e:
-            logger.error(f"恢复挂单失败: {e}")
-
+        # 启动时同步恢复挂单状态
+        data_loader.recover_active_sell_orders(self.trader_service, self.trader_strategy_service)
         group_codes = []
         for stock_code in self.inner_stock_infos:
             group_codes.append(stock_code)
@@ -86,7 +77,7 @@ class Strategy2:
         time.sleep(5)
         self.watchdog.start()
         self.completed_loading = True
-        threading.Thread(target=data_loader.interval_fresh_holding, args=(self.inner_stock_infos, self.target_index_infos, self.trader_service)).start()
+        threading.Thread(target=data_loader.interval_fresh_holding, args=(self.inner_stock_infos, self.target_index_infos, self.trader_service), kwargs={'trader_strategy_service': self.trader_strategy_service}).start()
 
     def handler(self, msgs):
         global print_count_index
@@ -130,85 +121,65 @@ class Strategy2:
                 self.premium_manager.update(code, stock_info, index_info, self.realtime_iopv_infos[utils.purified_code(code)])
 
                 # 主动挂单与被动成交优化逻辑
-                # 获取当前股票代码在交易服务中对应的主动卖单（Active Sell Order）的详细信息
                 active_order = self.trader_strategy_service.get_active_sell_order_details(code)
-                # 计算该主动卖单中尚未成交的股数（如果存在该订单，为总委托量减去已成交量，否则为 0）
                 active_shares = (active_order.order_volume - active_order.traded_volume) if active_order else 0
-                # 将未成交的股数转换为“手”（每手等于 100 股）
                 active_lots = active_shares // 100
-                # 计算当前总计可用于卖出的手数（当前可用持仓 + 已挂单待成交的股票手数）
                 total_available_lots = stock_info['hold_can_use_num'] + active_lots
 
-                # 如果有可用持仓或已挂单待成交的股票，说明可以进行卖出逻辑的处理
-                if total_available_lots > 0
-                    # 从溢价管理器的买入队列中尝试获取该股票的买入节点信息（检查是否有买盘挂单匹配）
+                if total_available_lots > 0:
                     buy_node = self.premium_manager.buy_queue.code_map.get(code)
-                    # 判断当前市场中是否存在合适的买盘（买盘节点不为空，且溢价率非负，表明买方报价高于或等于评估净值）
                     is_suitable_buy_1 = (buy_node is not None and buy_node.premium >= 0)
 
-                    # 如果存在合适的买盘（满足即时被动成交条件）
                     if is_suitable_buy_1:
-                        # 如果当前存在已挂出的小幅加价限价单
                         if active_order:
-                            # 异步提交撤单并卖出的任务：先撤掉原有的挂单，然后以买盘价格进行即时卖出成交
                             self.trader_strategy_service.processor.submit_task(
                                 self.trader_strategy_service.cancel_and_sell_task, code, active_order.order_id, buy_node.price, buy_node.appraisal, stock_info, self.inner_stock_infos, self.target_index_infos
                             )
-                        # 如果当前没有挂出限价单，直接进行即时卖出
                         else:
-                            # 获取当前可用的全部持仓股数作为卖出数量
                             sell_num = stock_info['hold_can_use_num']
-                            # 从买入队列中移出该股票，避免重复触发
                             self.premium_manager.buy_queue.remove_stock(code)
-                            # 执行卖出操作，将股票以买盘节点价格卖给对手盘
                             self.trader_strategy_service.to_sell(
                                 self.inner_stock_infos, self.target_index_infos, code, buy_node.price, buy_node.appraisal, True
                             )
-                            # 在本地持仓数据中扣除对应的卖出股数
                             stock_info['hold_can_use_num'] -= sell_num
-                    # 如果不存在满足即时成交条件的合适买盘，则执行主动挂单逻辑
                     else:
-                        # 确保当前盘口有卖一价，且卖一价有效
                         if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0]:
-                            # 获取该股票当前的实时评估净值 (IOPV)
                             appraisal = self.realtime_iopv_infos[utils.purified_code(code)]['current']
-                            # 确认实时估值有效且大于 0
                             if appraisal and appraisal > 0:
-                                # 取当前的卖一价
                                 ask_price_1 = stock_info['askPrice'][0]
-                                # 计算目标挂单价格：在当前卖一价的基础之上加 1 个最小变动单位 (Tick)
-                                target_price = ask_price_1 + self.tick_size
-                                # 计算目标挂单价格相对于评估净值的折价比例
-                                discount = (appraisal - target_price) / appraisal * 100
-                                # 如果折价幅度在限定的阈值之内（例如低于 0.5%，说明折价亏损很小，可以接受更低价格挂单）
-                                if discount <= self.active_sell_discount_threshold:
-                                    # 将目标价格设为卖一价（直接排在卖一最前列）
+                                target_price = ask_price_1 - self.tick_size
+
+                                buy_premium = buy_node.premium if buy_node is not None else None
+
+                                if buy_premium is not None and abs(buy_premium) <= self.active_sell_discount_threshold:
                                     desired_price = ask_price_1
-                                # 如果折价幅度超过了限制（说明若以卖一价卖出会亏损偏多）
                                 else:
-                                    # 挂在卖一价之上的一个 tick (即卖一价 + 1 tick)
                                     desired_price = target_price
 
-                                # 如果当前已经有正在挂着的主动卖单
-                                if active_order:
-                                    # 计算当前已有挂单的价格与我们新计算的期望挂单价格的差值
+                                # 折价已缩小到0.15%以内，提前撤单，为即将到来的被动成交让路
+                                if buy_premium is not None and abs(buy_premium) <= 0.15 and active_order:
+                                    self.trader_strategy_service.processor.submit_task(
+                                        self.trader_strategy_service.cancel_and_wait, code, active_order.order_id
+                                    )
+                                    self.trader_strategy_service.active_sell_orders.pop(code, None)
+                                    stock_info['hold_can_use_num'] += active_shares // 100
+                                elif active_order:
+                                    # 如果当前已经存在挂着的主动卖单，判断是否需要“改单”
                                     price_diff = abs(active_order.price - desired_price)
-                                    # 检查挂单数量是否与我们目前总的可用卖出数量（手 * 100）不一致
+                                    # 检查已挂单股数（active_shares）是否与当前最新计算的总可卖股数（total_available_lots * 100）不符（例如期间有新买入）
                                     vol_mismatch = (active_shares != total_available_lots * 100)
-                                    # 如果挂单价格有偏差，或者挂单数量与最新可用数量不匹配
+                                    
+                                    # 如果价格有变化，或者挂单数量不匹配，就需要撤掉旧单并按最新参数重新挂单
                                     if price_diff > 1e-5 or vol_mismatch:
-                                        # 异步提交撤销旧单并重新以新价格/数量挂单的任务
                                         self.trader_strategy_service.processor.submit_task(
                                             self.trader_strategy_service.cancel_and_place_active_sell_task, code, active_order.order_id, desired_price, total_available_lots, stock_info, self.inner_stock_infos
                                         )
-                                # 如果当前没有任何挂单
-                                else:
-                                    # 异步提交直接以期望价格挂出主动卖单的任务
+                                elif buy_premium is not None and abs(buy_premium) > 0.15:
+                                    # 如果当前没有挂任何卖单，且折价还没有缩小到0.15%以内（尚未临近被动成交），则首次挂单
                                     self.trader_strategy_service.processor.submit_task(
                                         self.trader_strategy_service.place_active_sell_task, code, desired_price, total_available_lots, stock_info, self.inner_stock_infos
                                     )
-                    # 处理完该股票的卖出/挂单逻辑后，跳过本轮循环中后续的代码，继续处理下一只股票
-                    continue
+
 
                 # it's the time to design trading part
                 first_buy_queue_node = self.premium_manager.buy_queue.head
