@@ -141,7 +141,7 @@ def interval_fresh_holding(inner_stock_infos, target_index_infos, trader_service
                             # 如果挂单没有被记录在内存字典中，则进行“补漏”登记
                             if order.stock_code not in trader_strategy_service.active_sell_orders:
                                 trader_strategy_service.active_sell_orders[order.stock_code] = order.order_id
-                                logger.info(f"[定时校验修复] 成功登记漏掉的已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}")
+                                # logger.info(f"[定时校验修复] 成功登记漏掉的已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}")
                 except Exception as ex:
                     logger.error(f"interval_fresh_holding 定时维护挂单异常: {ex}")
 

@@ -162,7 +162,7 @@ class PremiumStrategyManager:
 
         # 逻辑：买一存在 > 0，有持仓可用，买一金额 > 200元
         if (len(stock_info['bidPrice']) > 0 and stock_info['bidPrice'][0] > 0 and
-                stock_info['hold_can_use_num'] > 0 and
+                stock_info['hold_num'] > 0 and
                 stock_info["bidVol"][0] * stock_info["bidPrice"][0] * 100 > 200):
             self.buy_queue.upsert_stock(
                 stock_code,

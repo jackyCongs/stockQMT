@@ -19,7 +19,7 @@ print_count_index = 0
 rest_index_push_count = 0
 class Strategy2:
     def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
-        self.frozen_amount = 30000
+        self.frozen_amount = 0
         self.bought_list = {}
         self.stock_list = []
         # 等待被初始化的全局场内基金
@@ -124,65 +124,65 @@ class Strategy2:
                 active_order = self.trader_strategy_service.get_active_sell_order_details(code)
                 active_shares = (active_order.order_volume - active_order.traded_volume) if active_order else 0
                 active_lots = active_shares // 100
-                total_available_lots = stock_info['hold_can_use_num'] + active_lots
+                has_tracked_order = code in self.trader_strategy_service.active_sell_orders
+                if has_tracked_order and not active_order:
+                    pass
+                else:
+                    total_available_lots = stock_info['hold_can_use_num'] + active_lots
 
-                if total_available_lots > 0:
-                    buy_node = self.premium_manager.buy_queue.code_map.get(code)
-                    is_suitable_buy_1 = (buy_node is not None and buy_node.premium >= 0)
+                    if total_available_lots > 0:
+                        buy_node = self.premium_manager.buy_queue.code_map.get(code)
+                        is_suitable_buy_1 = (buy_node is not None and buy_node.premium >= 0)
 
-                    if is_suitable_buy_1:
-                        if active_order:
-                            self.trader_strategy_service.processor.submit_task(
-                                self.trader_strategy_service.cancel_and_sell_task, code, active_order.order_id, buy_node.price, buy_node.appraisal, stock_info, self.inner_stock_infos, self.target_index_infos
-                            )
+                        if is_suitable_buy_1:
+                            if active_order:
+                                self.trader_strategy_service.processor.submit_task(
+                                    self.trader_strategy_service.cancel_and_sell_task, code, active_order.order_id, buy_node.price, buy_node.appraisal, stock_info, self.inner_stock_infos, self.target_index_infos
+                                )
+                            else:
+                                sell_num = stock_info['hold_can_use_num']
+                                self.premium_manager.buy_queue.remove_stock(code)
+                                self.trader_strategy_service.to_sell(
+                                    self.inner_stock_infos, self.target_index_infos, code, buy_node.price, buy_node.appraisal, True
+                                )
+                                stock_info['hold_can_use_num'] -= sell_num
                         else:
-                            sell_num = stock_info['hold_can_use_num']
-                            self.premium_manager.buy_queue.remove_stock(code)
-                            self.trader_strategy_service.to_sell(
-                                self.inner_stock_infos, self.target_index_infos, code, buy_node.price, buy_node.appraisal, True
-                            )
-                            stock_info['hold_can_use_num'] -= sell_num
-                    else:
-                        if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0]:
-                            appraisal = self.realtime_iopv_infos[utils.purified_code(code)]['current']
-                            if appraisal and appraisal > 0:
-                                ask_price_1 = stock_info['askPrice'][0]
-                                target_price = ask_price_1 - self.tick_size
+                            if len(stock_info['askPrice']) > 0 and stock_info['askPrice'][0]:
+                                appraisal = self.realtime_iopv_infos[utils.purified_code(code)]['current']
+                                if appraisal and appraisal > 0:
+                                    ask_price_1 = stock_info['askPrice'][0]
+                                    target_price = ask_price_1 - self.tick_size
 
-                                buy_premium = buy_node.premium if buy_node is not None else None
+                                    buy_premium = buy_node.premium if buy_node is not None else None
 
-                                if buy_premium is not None and abs(buy_premium) <= self.active_sell_discount_threshold:
-                                    desired_price = ask_price_1
-                                else:
-                                    desired_price = target_price
+                                    if buy_premium is not None and abs(buy_premium) <= self.active_sell_discount_threshold:
+                                        desired_price = ask_price_1
+                                    else:
+                                        desired_price = target_price
 
-                                # 折价已缩小到0.15%以内，提前撤单，为即将到来的被动成交让路
-                                if buy_premium is not None and abs(buy_premium) <= 0.15 and active_order:
-                                    self.trader_strategy_service.processor.submit_task(
-                                        self.trader_strategy_service.cancel_and_wait, code, active_order.order_id
-                                    )
-                                    self.trader_strategy_service.active_sell_orders.pop(code, None)
-                                    stock_info['hold_can_use_num'] += active_shares // 100
-                                elif active_order:
-                                    # 如果当前已经存在挂着的主动卖单，判断是否需要“改单”
-                                    price_diff = abs(active_order.price - desired_price)
-                                    # 检查已挂单股数（active_shares）是否与当前最新计算的总可卖股数（total_available_lots * 100）不符（例如期间有新买入）
-                                    vol_mismatch = (active_shares != total_available_lots * 100)
-                                    
-                                    # 如果价格有变化，或者挂单数量不匹配，就需要撤掉旧单并按最新参数重新挂单
-                                    if price_diff > 1e-5 or vol_mismatch:
+                                    if buy_premium is None:
+                                        logger.error(f'buy_premium is None, code:{code}, appraisal: {appraisal}, desired_price: {desired_price}')
+                                        continue
+
+                                    if buy_premium is not None and abs(buy_premium) <= 0.15 and active_order:
                                         self.trader_strategy_service.processor.submit_task(
-                                            self.trader_strategy_service.cancel_and_place_active_sell_task, code, active_order.order_id, desired_price, total_available_lots, stock_info, self.inner_stock_infos
+                                            self.trader_strategy_service.cancel_and_wait, code, active_order.order_id
                                         )
-                                elif buy_premium is not None and abs(buy_premium) > 0.15:
-                                    # 如果当前没有挂任何卖单，且折价还没有缩小到0.15%以内（尚未临近被动成交），则首次挂单
-                                    self.trader_strategy_service.processor.submit_task(
-                                        self.trader_strategy_service.place_active_sell_task, code, desired_price, total_available_lots, stock_info, self.inner_stock_infos
-                                    )
+                                        self.trader_strategy_service.active_sell_orders.pop(code, None)
+                                        stock_info['hold_can_use_num'] += active_shares // 100
+                                    elif active_order:
+                                        price_diff = abs(active_order.price - desired_price)
+                                        vol_mismatch = (active_shares != total_available_lots * 100)
+                                        if price_diff > 1e-5 or vol_mismatch:
+                                            self.trader_strategy_service.processor.submit_task(
+                                                self.trader_strategy_service.cancel_and_place_active_sell_task, code, active_order.order_id, desired_price, total_available_lots, stock_info, self.inner_stock_infos
+                                            )
+                                    elif buy_premium is not None and abs(buy_premium) > 0.15:
+                                        self.trader_strategy_service.processor.submit_task(
+                                            self.trader_strategy_service.place_active_sell_task, code, desired_price, total_available_lots, stock_info, self.inner_stock_infos
+                                        )
+                                first_buy_queue_node = self.premium_manager.buy_queue.head
 
-
-                # it's the time to design trading part
-                first_buy_queue_node = self.premium_manager.buy_queue.head
                 first_sell_queue_node = self.premium_manager.sell_queue.head
 
                 if not self.completed_loading:

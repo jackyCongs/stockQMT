@@ -366,17 +366,27 @@ class TraderStrategyService:
         try:
             order = self.trader_service.query_by_order_id(int(order_id))
             if order:
+                # 只有明确已终止的状态才清除跟踪记录
                 if order.order_status in [
-                    xtconstant.ORDER_UNSUBMITTED,
-                    xtconstant.ORDER_SUBMITTED,
-                    xtconstant.ORDER_PART_SUCCEEDED,
-                    xtconstant.ORDER_CANCEILING
+                    xtconstant.ORDER_CANCELED,
+                    xtconstant.ORDER_PART_CANCEL,
+                    xtconstant.ORDER_PARTSUCC_CANCEL,
+                    xtconstant.ORDER_SUCCEEDED,
+                    xtconstant.ORDER_JUNK
                 ]:
-                    return order
+                    logger.info(f"主动卖单已结束 {order_id} 状态: {order.order_status}，移除跟踪")
+                    self.active_sell_orders.pop(stock_code, None)
+                    return None
+                # 订单仍然活跃（未报/待报/已报/部分成交/待撤）
+                return order
+            else:
+                # API返回None，可能是临时查询失败，保留跟踪记录不删除
+                logger.warning(f"query_by_order_id 返回 None, order_id: {order_id}，暂不清除跟踪记录")
+                return None
         except Exception as e:
+            # 查询异常，保留跟踪记录不删除，等待下次重试
             logger.error(f"查询挂单详情异常 {order_id}: {e}")
-        self.active_sell_orders.pop(stock_code, None)
-        return None
+            return None
 
     def cancel_and_wait(self, code, order_id):
         logger.info(f"开始撤销挂单 {order_id} 代码: {code}")
@@ -387,7 +397,8 @@ class TraderStrategyService:
             if order:
                 if order.order_status in [
                     xtconstant.ORDER_CANCELED,
-                    xtconstant.ORDER_PART_CANCELED,
+                    xtconstant.ORDER_PART_CANCEL,
+                    xtconstant.ORDER_PARTSUCC_CANCEL,
                     xtconstant.ORDER_SUCCEEDED,
                     xtconstant.ORDER_JUNK
                 ]:
