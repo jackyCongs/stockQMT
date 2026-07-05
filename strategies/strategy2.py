@@ -172,10 +172,8 @@ class Strategy2:
                                     if active_order and (buy_premium <= 0.15 or order_premium <= 0.15):
                                         logger.info(f"触发防割韭菜/溢价收窄撤单 code:{code}, buy_premium:{buy_premium}, order_premium:{order_premium}")
                                         self.trader_strategy_service.processor.submit_task(
-                                            self.trader_strategy_service.cancel_and_wait, code, active_order.order_id
+                                            self.trader_strategy_service.cancel_active_sell_task, code, active_order.order_id, stock_info
                                         )
-                                        self.trader_strategy_service.active_sell_orders.pop(code, None)
-                                        stock_info['hold_can_use_num'] += active_shares // 100
                                     elif active_order:
                                         price_diff = abs(active_order.price - desired_price)
                                         vol_mismatch = (active_shares != total_available_lots * 100)

@@ -401,6 +401,33 @@ class TraderStrategyService:
             time.sleep(0.01)
         logger.warning(f"等待挂单 {order_id} 撤单超时")
         return None
+    def cancel_active_sell_task(self, code, order_id, stock_info):
+        """仅撤销主动卖单，不再重新挂单（防割韭菜/溢价收窄场景）"""
+        lock = self._get_lock(code)
+        if not lock.acquire(blocking=False):
+            logger.info(f"Lock for {code} is already held. Skipping cancel_active_sell_task.")
+            return
+        try:
+            order = self.cancel_and_wait(code, order_id)
+            cancelled_lots = 0
+            if order:
+                cancelled_shares = order.order_volume - order.traded_volume
+                cancelled_lots = cancelled_shares // 100
+            else:
+                order = self.trader_service.query_by_order_id(int(order_id))
+                if order:
+                    cancelled_shares = order.order_volume - order.traded_volume
+                    cancelled_lots = cancelled_shares // 100
+
+            if cancelled_lots > 0:
+                stock_info['hold_can_use_num'] += cancelled_lots
+                logger.info(f"防割韭菜撤单完成，恢复可用持仓: 可用={stock_info['hold_can_use_num']}, 总数={stock_info['hold_num']}")
+
+            self.active_sell_orders.pop(code, None)
+        except Exception as e:
+            logger.exception(f"cancel_active_sell_task 执行异常 {code}: {e}")
+        finally:
+            lock.release()
 
     def cancel_and_sell_task(self, code, active_order_id, limit_price, appraisal, stock_info, inner_stock_infos, target_index_infos):
         lock = self._get_lock(code)
