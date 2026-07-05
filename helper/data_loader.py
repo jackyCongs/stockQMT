@@ -131,17 +131,36 @@ def interval_fresh_holding(inner_stock_infos, target_index_infos, trader_service
             current_holding = trader_service.get_holding()
             fresh_holding(inner_stock_infos, target_index_infos, current_holding)
             
-            # 定时维护并补漏已挂的主动卖单状态，防止内存状态与柜台实盘脱节
+            # 定时双向维护与补漏已挂的主动卖单状态，防止内存状态与柜台实盘脱节
             if trader_strategy_service is not None:
                 try:
                     hangings = trader_service.get_hanging()
+                    hanging_map = {}
                     for order in hangings:
                         # 检查挂单是否属于当前策略，并且是未成交的限价卖单
                         if order.strategy_name == trader_strategy_service.strategy_name and order.order_type == xtconstant.STOCK_SELL:
-                            # 如果挂单没有被记录在内存字典中，则进行“补漏”登记
+                            hanging_map[order.stock_code] = order.order_id
+                            # 1. 补漏登记：如果挂单没有被记录在内存字典中，则进行“补漏”登记
                             if order.stock_code not in trader_strategy_service.active_sell_orders:
                                 trader_strategy_service.active_sell_orders[order.stock_code] = order.order_id
-                                # logger.info(f"[定时校验修复] 成功登记漏掉的已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}")
+                                logger.info(f"[定时校验修复] 成功登记漏掉的已挂主动卖单：[{order.stock_code}] 订单ID: {order.order_id}")
+
+                    # 2. 清理过期：如果内存中有记录，但在柜台已挂单列表中不存在（说明已成功成交/终结/废单），则安全清理
+                    current_tracked_codes = list(trader_strategy_service.active_sell_orders.keys())
+                    for code in current_tracked_codes:
+                        if code not in hanging_map:
+                            order_id = trader_strategy_service.active_sell_orders.get(code)
+                            if order_id:
+                                order = trader_service.query_by_order_id(int(order_id))
+                                if order is None or order.order_status in [
+                                    xtconstant.ORDER_CANCELED,
+                                    xtconstant.ORDER_PART_CANCEL,
+                                    xtconstant.ORDER_PARTSUCC_CANCEL,
+                                    xtconstant.ORDER_SUCCEEDED,
+                                    xtconstant.ORDER_JUNK
+                                ]:
+                                    trader_strategy_service.active_sell_orders.pop(code, None)
+                                    logger.info(f"[定时校验修复] 清理已成交/了结的主动卖单跟踪：[{code}] 订单ID: {order_id}")
                 except Exception as ex:
                     logger.error(f"interval_fresh_holding 定时维护挂单异常: {ex}")
 

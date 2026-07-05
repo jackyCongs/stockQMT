@@ -86,12 +86,6 @@ class TraderService:
         lock = self._get_lock(stock_code)
         lock.acquire()
         try:
-            # if inner_stock_infos[stock_code]['hold_num'] == 0:
-            #     return
-            # 更新持有数量
-            remain_num = inner_stock_infos[stock_code]['hold_num']
-            inner_stock_infos[stock_code].update({'hold_num': remain_num - sell_num})
-
             sell_num *= 100
             return self.xt_trader.order_stock(
                 self.account, stock_code, xtconstant.STOCK_SELL, sell_num, xtconstant.FIX_PRICE, sell_price,
@@ -427,7 +421,6 @@ class TraderStrategyService:
 
             if cancelled_lots > 0:
                 stock_info['hold_can_use_num'] += cancelled_lots
-                stock_info['hold_num'] += cancelled_lots
                 logger.info(f"撤单后更新本地持仓: 可用={stock_info['hold_can_use_num']}, 总数={stock_info['hold_num']}")
 
             self.active_sell_orders.pop(code, None)
@@ -462,17 +455,18 @@ class TraderStrategyService:
 
             if cancelled_lots > 0:
                 stock_info['hold_can_use_num'] += cancelled_lots
-                stock_info['hold_num'] += cancelled_lots
                 logger.info(f"撤单更新挂单持仓: 可用={stock_info['hold_can_use_num']}, 总数={stock_info['hold_num']}")
 
             self.active_sell_orders.pop(code, None)
 
-            if stock_info['hold_can_use_num'] > 0:
-                sell_num = stock_info['hold_can_use_num']
+            sell_num = total_available_lots
+            if sell_num > 0:
+                # 等待柜台异步释放可用持仓余额，避免触发 [251005][证券可用数量不足]
+                time.sleep(0.2)
                 order_id = self.trader_service.sync_sell(code, desired_price, sell_num, self.strategy_name, inner_stock_infos)
                 if order_id and order_id > 0:
                     self.active_sell_orders[code] = order_id
-                    stock_info['hold_can_use_num'] -= sell_num
+                    stock_info['hold_can_use_num'] = max(0, stock_info['hold_can_use_num'] - sell_num)
                     logger.info(f"挂出新主动卖单 {order_id} 价格: {desired_price}, 数量: {sell_num}手. 可用={stock_info['hold_can_use_num']}")
                 else:
                     logger.error(f"主动卖单挂单失败 {code} 价格: {desired_price}")

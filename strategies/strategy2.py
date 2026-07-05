@@ -164,7 +164,13 @@ class Strategy2:
                                         logger.error(f'buy_premium is None, code:{code}, appraisal: {appraisal}, desired_price: {desired_price}')
                                         continue
 
-                                    if buy_premium is not None and abs(buy_premium) <= 0.15 and active_order:
+                                    # 计算当前挂单价格相比估值的实时溢价率
+                                    order_premium = (active_order.price - appraisal) / appraisal * 100 if active_order and appraisal > 0 else 999.0
+
+                                    # 当溢价已缩小到0.15%以内（或净值回升导致挂单价格已低于/贴近估值，即 order_premium <= 0.15 或 buy_premium <= 0.15），
+                                    # 必须立即撤单！既为被动成交让路，也绝对防止因净值上涨而以低于估值的价格被割韭菜！
+                                    if active_order and (buy_premium <= 0.15 or order_premium <= 0.15):
+                                        logger.info(f"触发防割韭菜/溢价收窄撤单 code:{code}, buy_premium:{buy_premium}, order_premium:{order_premium}")
                                         self.trader_strategy_service.processor.submit_task(
                                             self.trader_strategy_service.cancel_and_wait, code, active_order.order_id
                                         )
@@ -177,7 +183,7 @@ class Strategy2:
                                             self.trader_strategy_service.processor.submit_task(
                                                 self.trader_strategy_service.cancel_and_place_active_sell_task, code, active_order.order_id, desired_price, total_available_lots, stock_info, self.inner_stock_infos
                                             )
-                                    elif buy_premium is not None and abs(buy_premium) > 0.15:
+                                    elif buy_premium > 0.15:
                                         self.trader_strategy_service.processor.submit_task(
                                             self.trader_strategy_service.place_active_sell_task, code, desired_price, total_available_lots, stock_info, self.inner_stock_infos
                                         )
