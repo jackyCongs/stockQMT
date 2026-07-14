@@ -11,10 +11,11 @@ from helper.time_utils import get_time, get_datetime
 class AdaptiveTaskProcessor:
     _instance = None
     _lock = threading.Lock()
-    # 单例模式
+    
+    # Singleton pattern
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            with cls._lock:  # 加锁保证多线程安全
+            with cls._lock:  # Thread lock to ensure thread safety
                 if not cls._instance:
                     cls._instance = super(AdaptiveTaskProcessor, cls).__new__(cls)
         return cls._instance
@@ -22,13 +23,13 @@ class AdaptiveTaskProcessor:
     def __init__(self):
         if hasattr(self, '_initialized') and self._initialized:
             return
-        # 6个大核 + 8个小核
+        # 6 performance cores + 8 efficiency cores
         self.physical_cores = 14
         self.logical_cores = 20
 
-        # 线程池配置（IO密集型默认100，是逻辑核心的5倍）
+        # Thread pool config (IO-bound defaults to 100, which is 5x logical cores)
         self.base_workers = self.physical_cores * 4
-        # 线程池配置：核心线程20（接近逻辑核心数），最大50（避免过多切换）
+        # Thread pool config: 20 core threads (close to logical core count), max 50 (to prevent excessive context switching)
         self.executor = ThreadPoolExecutor(
             max_workers=self.base_workers,
             thread_name_prefix="TaskWorker"
@@ -37,62 +38,62 @@ class AdaptiveTaskProcessor:
         self.running = True
         self.task_counter = 0
 
-        # 启动监控器
+        # Start system status monitor
         self._start_monitor()
         self._initialized = True
 
     def _start_monitor(self):
-        """实时监控系统状态和任务处理效率"""
+        """Real-time monitoring of system telemetry and task execution throughput"""
         def monitor():
             last_count = 0
             while self.running:
-                # 计算每秒处理任务数
+                # Calculate tasks processed per second (TPS)
                 current_count = self.task_counter
                 tps = current_count - last_count
                 last_count = current_count
 
-                # 打印监控信息
-                logging.info(f"[监控] | {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}|"
-                      f" TPS: {tps}/秒 | 活跃线程: {threading.active_count()} | "
-                      f"CPU使用率: {psutil.cpu_percent()}% | "
-                      f"内存使用率: {psutil.virtual_memory().percent}% | "
-                      f"线程池大小: {self.executor._max_workers}")
+                # Log system health information
+                logging.info(f"[Monitor] | {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}|"
+                      f" TPS: {tps}/sec | Active Threads: {threading.active_count()} | "
+                      f"CPU Usage: {psutil.cpu_percent()}% | "
+                      f"Memory Usage: {psutil.virtual_memory().percent}% | "
+                      f"Thread Pool Size: {self.executor._max_workers}")
                 if threading.active_count() > self.executor._max_workers + 20:
-                    logging.info(f"[严重警告] 线程池疑似满载！当前总线程: {threading.active_count()}，请考虑增加 base_workers")
+                    logging.info(f"[CRITICAL WARNING] Thread pool is potentially overloaded! Current active threads: {threading.active_count()}, consider increasing base_workers.")
                 time.sleep(20)
 
         threading.Thread(target=monitor, daemon=True, name="SystemMonitor").start()
 
     def _wrap_task(self, task, args, kwargs, submit_time):
-        """任务包装器：统计任务数和处理时间"""
+        """Task wrapper: tracks task counter and metrics"""
         try:
             start_time = get_time()
             task(*args, **kwargs)
             end_time = get_time()
             # logging.info(
-            #     f"任务执行耗时: {(end_time - start_time) * 1000:.1f}ms | 从提交到完成总耗时: {(end_time - submit_time) * 1000:.1f}ms")
+            #     f"Task duration: {(end_time - start_time) * 1000:.1f}ms | Total queue-to-completion time: {(end_time - submit_time) * 1000:.1f}ms")
 
-            # 可选：记录慢任务（处理时间>100ms）
+            # Optional: Log slow tasks (execution duration > 100ms)
             if end_time - start_time > 1:
-                logging.info(f"[警告] {task.__name__} [慢任务耗时]: {end_time -start_time:.3f}秒 [提交耗时]: {end_time - submit_time:.3f}")
+                logging.info(f"[WARNING] {task.__name__} [Slow task execution time]: {end_time - start_time:.3f}s [Total queue-to-completion time]: {end_time - submit_time:.3f}s")
         except Exception as e:
-            logging.error(f"任务执行失败: {e}", exc_info=True)
+            logging.error(f"Task execution failed: {e}", exc_info=True)
         finally:
             self.task_counter += 1
 
     def submit_task(self, task, *args, **kwargs):
-        """提交任务（支持优先级，0最高）"""
+        """Submit a task to the execution pool"""
         submit_time = get_time()
         try:
-            # 非阻塞提交，队列满时返回False（可根据需求改为block=True）
+            # Non-blocking submit. Returns False if queue is full (can configure block=True if needed)
             self.executor.submit(self._wrap_task, task, args, kwargs, submit_time)
             return True
         except Exception as e:
-            logging.info(f"提交线程失败 {e}")
+            logging.info(f"Failed to submit task thread: {e}")
             return False
 
     def shutdown(self):
-        """优雅关闭资源"""
+        """Gracefully shutdown and release resources"""
         self.running = False
         self.executor.shutdown(wait=True)
-        logging.info("所有任务处理完成，已关闭")
+        logging.info("All tasks processed. Engine shutdown complete.")

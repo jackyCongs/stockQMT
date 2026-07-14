@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 from xtquant import xtdata
 from service.watchdog_service import WatchdogService
 
-# 注入并导入通达信 TQ 插件路径
+# Inject and import TongDaXin TQ plugin path
 tdx_path = r"D:\stock_software\tongdaxin\PYPlugins\user"
 if tdx_path not in sys.path:
     sys.path.append(tdx_path)
@@ -20,7 +20,7 @@ except ImportError:
     _tq = None
 
 
-# 配置高性能日志（关掉 DEBUG，只保留警告和错误，节约盘中 I/O）
+# Configure high-performance logging (disable DEBUG, retain WARNING/ERROR to save I/O overhead)
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("TickGateway")
 
@@ -31,7 +31,7 @@ class IndexMqGateway:
         self.mq_port = mq_port
         self.mq_client = mqtt.Client(client_id="AlphaCore_PyGateway", clean_session=True)
 
-        # 挂载回调函数（收发一体化核心）
+        # Bind callback functions (core of the transceiver integration)
         self.mq_client.on_connect = self._on_mq_connect
         self.mq_client.on_message = self._on_mq_message
 
@@ -46,14 +46,14 @@ class IndexMqGateway:
         self.watchdog = WatchdogService()
 
     def _on_mq_connect(self, client, userdata, flags, rc):
-        """MQTT 连接成功后的钩子"""
+        """Callback triggered after successful connection to MQTT broker"""
         if rc == 0:
-            print(f"✅ 成功连接到 NanoMQ Broker: {self.mq_host}:{self.mq_port}")
-            # 建立连接后，立刻向 NanoMQ 订阅 Golang 引擎算好的实时指数
+            print(f"✅ Successfully connected to NanoMQ Broker: {self.mq_host}:{self.mq_port}")
+            # Immediately subscribe to real-time index calculations calculated by the Golang engine
             client.subscribe("alphacore/index/realtime", qos=0)
-            print("📡 [全双工开启] 已挂载接收天线，监听主题: alphacore/index/realtime")
+            print("📡 [Full Duplex Open] Listening to topic: alphacore/index/realtime")
         else:
-            logger.error(f"❌ 连接 NanoMQ 失败，返回码: {rc}")
+            logger.error(f"❌ Failed to connect to NanoMQ, return code: {rc}")
 
     def _on_mq_message(self, client, userdata, message):
         try:
@@ -67,14 +67,14 @@ class IndexMqGateway:
                 timestamp = item.get('t', 0)
                 compatible_results.append({
                     "i": etf_code,
-                    "p": iopv,  # p 存净值
-                    "r": increase_rate,  # r 存涨跌幅
+                    "p": iopv,  # 'p' stores net asset value (IOPV)
+                    "r": increase_rate,  # 'r' stores percentage price change
                     "t": timestamp
                 })
             self._update_realtime_iopv_infos(compatible_results)
 
         except Exception as e:
-            logger.error(f"处理 Golang 结果异常: {e}")
+            logger.error(f"Exception while processing Golang payload: {e}")
 
     def _update_realtime_iopv_infos(self, results):
         for res in results:
@@ -87,13 +87,13 @@ class IndexMqGateway:
                 continue
 
             pure_code = code
-            # 如果字典里还没这个键，先初始化一个空字典
+            # Initialize an empty dictionary if the key does not exist
             if pure_code not in self.realtime_iopv_infos:
                 self.realtime_iopv_infos[pure_code] = {}
 
             index_code = self.etf_to_index_code.get(pure_code, '')
             if index_code == '':
-                logger.warning(f"etf_code: {pure_code}, 对应的index_code缺失: {index_code}")
+                logger.warning(f"etf_code: {pure_code}, missing corresponding index_code: {index_code}")
 
             self.realtime_iopv_infos[pure_code].update({
                 'time': datetime.fromtimestamp(time_ms / 1000).strftime('%H:%M:%S'),
@@ -110,13 +110,13 @@ class IndexMqGateway:
             self.mq_client.connect(self.mq_host, self.mq_port, keepalive=60)
             self.mq_client.loop_start()
         except Exception as e:
-            logger.error(f"❌ 连接 NanoMQ 失败，请检查服务是否启动: {e}")
+            logger.error(f"❌ Failed to connect to NanoMQ. Please verify if the service is running: {e}")
             exit(1)
 
 
     def load_subscription_list(self):
         if not os.path.exists(self.config_path):
-            logger.error("未找到 alphacore_config.json！请先运行盘前初始化脚本。")
+            logger.error("alphacore_config.json not found! Please run the pre-market initialization script first.")
             exit(1)
 
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -135,8 +135,8 @@ class IndexMqGateway:
 
         self.subscribe_list = list(all_stocks)
         self.bse_subscribe_list = list(bse_stocks)
-        print(f"✅ 从配置文件加载完毕，QMT 订阅成分股: {len(self.subscribe_list)} 只")
-        print(f"✅ 北交所(通达信TQ)订阅成分股: {len(self.bse_subscribe_list)} 只 → {self.bse_subscribe_list}")
+        print(f"✅ Loaded from configuration. QMT subscribed components: {len(self.subscribe_list)}")
+        print(f"✅ BSE (TDX TQ) subscribed components: {len(self.bse_subscribe_list)} -> {self.bse_subscribe_list}")
 
     def on_whole_tick_callback(self, datas):
         try:
@@ -151,13 +151,13 @@ class IndexMqGateway:
                     price = tick_data.get("lastClose", 0)
                     if price <= 0:
                         logger.critical(
-                            f"[致命] QMT行情 {stock_code} 实时价格与昨收价均为0，数据源异常！程序立即终止！"
+                            f"[FATAL] QMT feed {stock_code} real-time price and previous close are both 0. Data source anomaly! Terminating process immediately!"
                         )
                         self.mq_client.disconnect()
                         os._exit(1)
                     else:
                         logger.warning(
-                            f"[Fallback] QMT行情 {stock_code} 实时价格为0，已替换为昨收价: {price}"
+                            f"[Fallback] QMT feed {stock_code} real-time price is 0. Defaulting to previous close: {price}"
                         )
 
                 batch_payload.append({
@@ -178,10 +178,10 @@ class IndexMqGateway:
                     qos=0
                 )
         except Exception as e:
-            logger.error(f"批量打包 Tick 并转发 MQ 时异常: {e}")
+            logger.error(f"Exception while batching ticks and forwarding to MQ: {e}")
 
     def _on_bse_hq_callback(self, data_str):
-        """通达信 TQ 行情更新回调 - 收到推送后获取快照并转发 MQ"""
+        """TDX TQ quote update callback - fetch snapshot and forward to MQ upon push message"""
         try:
             self.watchdog.feed("publisher_bse_tick")
             code_info = json.loads(data_str)
@@ -190,7 +190,7 @@ class IndexMqGateway:
                 return
 
             if not _tq:
-                logger.error("通达信 TQ SDK 未成功加载！")
+                logger.error("TDX TQ SDK not loaded successfully!")
                 return
             snapshot = _tq.get_market_snapshot(stock_code=stock_code, field_list=[])
             if not snapshot:
@@ -201,14 +201,14 @@ class IndexMqGateway:
                 price = float(snapshot.get("LastClose", 0))
                 if price <= 0:
                     logger.critical(
-                        f"[致命] 北交所TQ行情 {stock_code} 实时价格与昨收价均为0，数据源异常！程序立即终止！"
+                        f"[FATAL] BSE TQ feed {stock_code} real-time price and previous close are both 0. Data source anomaly! Terminating process immediately!"
                     )
                     self.mq_client.disconnect()
                     os._exit(1)
                 else:
                     pass
                     # logger.warning(
-                    #     f"[Fallback] 北交所TQ行情 {stock_code} 实时价格为0，已替换为昨收价: {price}"
+                    #     f"[Fallback] BSE TQ feed {stock_code} real-time price is 0. Defaulting to previous close: {price}"
                     # )
 
             now_ms = int(time.time() * 1000)
@@ -229,44 +229,43 @@ class IndexMqGateway:
                     qos=0
                 )
         except Exception as e:
-            logger.error(f"处理北交所 TQ 行情回调异常: {e}")
+            logger.error(f"Exception while processing BSE TQ feed callback: {e}")
 
     def _start_bse_subscription(self):
-        """初始化通达信 TQ 并订阅北交所股票"""
+        """Initialize TDX TQ and subscribe to BSE equities"""
         if not _tq:
-            raise ImportError("无法载入通达信 tqcenter 模块，请检查通达信是否安装或路径是否正确！")
+            raise ImportError("Cannot import TDX tqcenter module. Verify if TongDaXin is installed and path is configured correctly!")
         _tq.initialize(__file__)
-        print("✅ 通达信 TQ SDK 初始化完成")
+        print("✅ TDX TQ SDK initialized successfully")
 
         result = _tq.subscribe_hq(
             stock_list=self.bse_subscribe_list,
             callback=self._on_bse_hq_callback
         )
-        print(f"🏛️ 北交所 TQ 订阅结果: {result}")
+        print(f"🏛️ BSE TQ subscription result: {result}")
 
     def start_gateway(self):
-        """启动网关，接管 QMT + TQ 行情并永久阻塞"""
+        """Start gateway, bind QMT + TQ feeds, and block main thread permanently"""
         self.connect_mq()
         self.load_subscription_list()
 
-        # ① 启动北交所 TQ 行情订阅
+        # ① 1. Subscribe to BSE TQ quotes
         if self.bse_subscribe_list:
             self._start_bse_subscription()
-            self.watchdog.register("publisher_bse_tick", 30, "行情网关-北交所TQ行情")
+            self.watchdog.register("publisher_bse_tick", 30, "QuoteGateway-BSE TQ feed")
 
-        # ② 其余股票走 QMT 全推
+        # ② 2. Other equities utilize QMT full quote push
         if self.subscribe_list:
-            print("🚀 开始向 QMT 内存总线注册【全推批处理】Tick 订阅...")
+            print("🚀 Registering QMT batch tick subscription on memory bus...")
             xtdata.subscribe_whole_quote(
                 code_list=self.subscribe_list,
                 callback=self.on_whole_tick_callback
             )
-            self.watchdog.register("publisher_qmt_tick", 30, "行情网关-QMT全推行情")
+            self.watchdog.register("publisher_qmt_tick", 30, "QuoteGateway-QMT full quote push")
 
-        # 启动看门狗（单例，如果已启动不会重复启动）
+        # Start watchdog service (Singleton; does not duplicate if already running)
         self.watchdog.start()
 
-        print("⚡ 极速行情网关已全线贯通！QMT + TQ 双引擎全速运转中...")
-        print("🐶 看门狗已挂载，QMT/北交所行情中断将自动报警")
-        print("🛑 保持此进程存活... (按 Ctrl+C 终止)")
-
+        print("⚡ High-speed Quote Gateway operational! QMT + TQ dual engines running...")
+        print("🐶 Watchdog active. Quote interruptions will trigger automated alerts.")
+        print("🛑 Keeping process alive... (Press Ctrl+C to terminate)")

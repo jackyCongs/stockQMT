@@ -11,97 +11,97 @@ class TradeCallback(XtQuantTraderCallback):
 
     def on_disconnected(self):
         """
-        连接断开
+        Connection disconnected
         :return:
         """
         logger.info("connection lost")
 
-    # 委托信息
+    # Order Details
     def on_stock_order(self, order):
-        print("委托成功")
+        print("Order placement successful")
         # print(f"""
         # =============================
-        #         委托信息
+        #         Order Details
         # =============================
-        # 账号类型: {order.account_type},
-        # 资金账号: {order.account_id},
-        # 证券代码: {order.stock_code},
-        # 订单编号: {order.order_id},
-        # 柜台合同编号: {order.order_sysid},
-        # 报单时间: {order.order_time},
-        # 委托类型: {order.order_type},
-        # 委托数量: {order.order_volume},
-        # 报价类型: {order.price_type},
-        # 委托价格: {order.price},
-        # 成交数量: {order.traded_volume},
-        # 成交均价: {order.traded_price},
-        # 委托状态: {order.order_status},
-        # 委托状态描述: {order.status_msg},
-        # 策略名称: {order.strategy_name},
-        # 委托备注: {order.order_remark},
-        # 多空方向: {order.direction},
-        # 交易操作: {order.offset_flag}
+        # Account Type: {order.account_type},
+        # Account ID: {order.account_id},
+        # Stock Ticker: {order.stock_code},
+        # Order ID: {order.order_id},
+        # Counterpart Contract ID: {order.order_sysid},
+        # Order Time: {order.order_time},
+        # Order Type: {order.order_type},
+        # Order Volume: {order.order_volume},
+        # Price Type: {order.price_type},
+        # Order Price: {order.price},
+        # Traded Volume: {order.traded_volume},
+        # Traded Avg Price: {order.traded_price},
+        # Order Status: {order.order_status},
+        # Status Msg: {order.status_msg},
+        # Strategy Name: {order.strategy_name},
+        # Order Remark: {order.order_remark},
+        # Direction: {order.direction},
+        # Offset Flag: {order.offset_flag}
         # """)
 
     def on_stock_trade(self, trade):
-        logger.info(f"on_stock_trade 成交, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        logger.info(f"on_stock_trade executed, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
         platform_name = account.get_platform_name_by_account_id(trade.account_id)
         if platform_name is None:
-            logger.error(f"platform_name 获取失败: {trade.account_id}")
+            logger.error(f"Failed to retrieve platform_name: {trade.account_id}")
         logger.info(f"""
                 =============================
-                        成交信息
+                        Trade execution info
                 =============================
-                券商平台: {platform_name},
-                账号类型: {trade.account_type},
-                资金账号: {trade.account_id},
-                证券代码: {trade.stock_code},
-                委托类型: {trade.order_type},
-                成交编号: {trade.traded_id},
-                成交时间: {trade.traded_time},
-                成交均价: {trade.traded_price},
-                成交数量: {trade.traded_volume},
-                成交金额: {trade.traded_amount},
-                订单编号: {trade.order_id},
-                柜台合同编号: {trade.order_sysid},
-                策略名称: {trade.strategy_name},
-                委托备注: {trade.order_remark}
+                Broker Platform: {platform_name},
+                Account Type: {trade.account_type},
+                Account ID: {trade.account_id},
+                Stock Ticker: {trade.stock_code},
+                Order Type: {trade.order_type},
+                Execution ID: {trade.traded_id},
+                Execution Time: {trade.traded_time},
+                Execution Avg Price: {trade.traded_price},
+                Execution Volume: {trade.traded_volume},
+                Execution Amount: {trade.traded_amount},
+                Order ID: {trade.order_id},
+                Counterpart Contract ID: {trade.order_sysid},
+                Strategy Name: {trade.strategy_name},
+                Order Remark: {trade.order_remark}
                 """)
-        logger.info(f"成交变动, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} {trade.account_id}, {trade.stock_code}, {trade.order_id}")
+        logger.info(f"Execution update, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} {trade.account_id}, {trade.stock_code}, {trade.order_id}")
         db = DBPool()
         strategy_transaction.add(db, trade, platform_name)
-        logger.info(f"on_stock_trade 成交处理完成, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
+        logger.info(f"on_stock_trade execution processing complete, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     def on_order_error(self, order_error):
         """
-        委托失败推送
-        :param order_error:XtOrderError 对象
+        Order placement failure callback
+        :param order_error: XtOrderError object
         :return:
         """
         logger.info("on order_error callback")
-        logger.info(f"委托报错回调, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, {order_error.order_remark} {order_error.error_msg}")
+        logger.info(f"Order error callback, {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, {order_error.order_remark} {order_error.error_msg}")
 
     def on_cancel_error(self, cancel_error):
         """
-        撤单失败推送
-        :param cancel_error: XtCancelError 对象
+        Order cancellation failure callback
+        :param cancel_error: XtCancelError object
         :return:
         """
         logger.info("on cancel_error callback")
-        logger.info(f"撤单失败 {cancel_error.order_id}, {cancel_error.error_id}, {cancel_error.error_msg}")
+        logger.info(f"Order cancellation failed: {cancel_error.order_id}, {cancel_error.error_id}, {cancel_error.error_msg}")
 
     def on_order_stock_async_response(self, response):
         """
-        异步下单回报推送
-        :param response: XtOrderResponse 对象
+        Asynchronous order response callback
+        :param response: XtOrderResponse object
         :return:
         """
         logger.info("on_order_stock_async_response callback")
-        logger.info(f"异步下单 {response.account_id}, {response.order_id}, {response.seq}")
+        logger.info(f"Asynchronous order placement response: {response.account_id}, {response.order_id}, {response.seq}")
 
     def on_account_status(self, status):
         """
-        :param response: XtAccountStatus 对象
+        :param status: XtAccountStatus object
         :return:
         """
         logger.info("on_account_status callback")

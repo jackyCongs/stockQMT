@@ -10,14 +10,14 @@ def init_logging(strategy_id, mode):
     log_dir = os.path.join(root_dir, 'logs')
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    # 2. 获取当前日期
+    # 2. Get current date
     curr_date = datetime.now().strftime("%Y%m%d")
-    # 3. 确定文件名前缀：如果是交易模式就用策略ID，否则用模式编号
+    # 3. Determine file prefix: use strategy ID for trade mode, else use mode number
     log_prefix = strategy_id if strategy_id else f"mode_{mode}"
     log_filename = f"{log_dir}/{log_prefix}_{curr_date}.log"
-    # 4. 配置日志
+    # 4. Configure logging
     log_format = '%(asctime)s | %(levelname)s | %(name)s.%(funcName)s:%(lineno)d | %(message)s'
-    # 清除可能存在的旧 handler (防止重复配置)
+    # Clear existing handlers to prevent duplicate configurations
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
     logging.basicConfig(

@@ -7,19 +7,19 @@ def insert_record(db, trans_type: int, money: float, company: str, trans_time: s
                 VALUES (%s, %s, %s, %s, %s)
             """
 
-        # 将独立的入参直接打包为元组，严格对应 SQL 中的占位符
+        # Pack independent parameters into a tuple, matching placeholders in SQL
         params = (trans_type, money, company, trans_time, tip)
 
         with conn.cursor() as cursor:
             cursor.execute(sql, params)
 
-        # 提交事务
+        # Commit transaction
         conn.commit()
 
         return cursor.lastrowid
 
     except Exception as e:
-        print(f"数据插入失败: {e}")
-        # 发生异常时回滚事务，防止产生脏数据
+        print(f"Data insertion failed: {e}")
+        # Rollback transaction on exception to prevent dirty data
         conn.rollback()
         return None

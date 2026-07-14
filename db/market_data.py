@@ -2,16 +2,16 @@
 
 
 def batch_insert_market_data(db, data_list):
-    # 连接到数据库
+    # Connect to the database
     conn = db.get_connection()
     cursor = conn.cursor()
     try:
-        # 准备 SQL 插入语句模板
+        # Prepare SQL insert statement template
         insert_sql = """
             INSERT INTO market_data (`stock_code`, `time`, `open`, `high`, `low`, `close`, `volume`, `amount`, `settle`, `openInterest`, `preClose`, `suspendFlag`)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        # 执行批量插入
+        # Execute batch insertion
         cursor.executemany(insert_sql, data_list)
         conn.commit()
     except Exception as e:
@@ -65,7 +65,7 @@ def get_all_day(db, stock_code, time):
         cursor.execute(query, (str(stock_code), time_pattern,))
         rows = cursor.fetchall()
         column_names = [description[0] for description in cursor.description]
-        # 将每条记录转换为字典，并放入列表中返回
+        # Convert each record to a dictionary and return in a list
         return [dict(zip(column_names, row)) for row in rows]
     except Exception as e:
         print(e)

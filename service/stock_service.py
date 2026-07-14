@@ -14,14 +14,14 @@ from helper.data_loader import calc_daily_excess_volatility_batch, get_penalty
 def read_lines_to_array(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
-            # 读取所有行并去除每行末尾的换行符
+            # Read all lines and strip trailing newlines/quotes
             lines = [line.strip().strip('"') for line in file]
             return lines
     except FileNotFoundError:
-        logger.error(f"错误：文件 '{file_path}' 不存在")
+        logger.error(f"Error: File '{file_path}' does not exist.")
         return []
     except Exception as e:
-        logger.error(f"错误：读取文件时发生异常: {e}")
+        logger.error(f"Error: Exception occurred while reading file: {e}")
         return []
 
 logger = logging.getLogger(__name__)
@@ -38,13 +38,13 @@ class StockService:
     def maintain_sh_etfs(self):
         sh_fund_codes = xtdata.get_stock_list_in_sector('沪深基金')
 
-        print(f"共{len(sh_fund_codes)}个基金")
+        print(f"Total funds: {len(sh_fund_codes)}")
         
         if not sh_fund_codes:
-            logger.error("从QMT未能获取到'沪深基金'列表，请检查QMT终端是否已开启并正常连接。")
+            logger.error("Failed to retrieve '沪深基金' sector list from QMT. Please check if QMT terminal is running and connected.")
             return
             
-        # 过滤出代码以5开头并且是上交所(.SH)的，并查询名称
+        # Filter out tickers starting with 5 (SSE funds ending with .SH) and query names
         sh_etfs = {}
         for full_code in sh_fund_codes:
             # full_code 形如 "510050.SH"
@@ -52,18 +52,18 @@ class StockService:
                 continue
                 
             code = full_code.split('.')[0]
-            # 严格过滤出真正的 ETF：
-            # 上交所 ETF 主要以 51, 52, 53, 56, 58 开头 (501, 502, 505 等为 LOF 或封闭式基金)
-            # 另外排除 519 开头的传统场外开放式基金（场内只做申赎，无PCF清单）
+            # Filter strictly for real Exchange Traded Funds (ETFs):
+            # SSE ETFs primarily prefix with 51, 52, 53, 56, 58 (501, 502, 505 are LOFs or closed-end funds)
+            # Exclude prefix 519 traditional OTC open-end funds (only traded OTC, no PCF list)
             if str(code).startswith(('51', '52', '53', '56', '58')) and not str(code).startswith('519'):
                 detail = xtdata.get_instrument_detail(full_code)
                 name = detail.get('InstrumentName', code) if detail else code
                 
-                # 双重保险：如果名称里明确写了 LOF，也坚决排除
+                # Double check: Exclude if 'LOF' is present in the name
                 if 'LOF' not in str(name).upper():
                     sh_etfs[code] = name
                 
-        logger.info(f"QMT共获取到 {len(sh_etfs)} 个上交所纯正场内ETF")
+        logger.info(f"QMT retrieved {len(sh_etfs)} pure exchange-traded SSE ETFs")
         
         conn = self.db.get_connection()
         try:
@@ -91,12 +91,12 @@ class StockService:
                 for code, info in existing_map.items():
                     status = info['status']
                     if str(code).startswith('5') and code not in sh_etfs and status == 1:
-                        # 不武断下线，调用底层详情接口做二次核实
+                        # Avoid hasty delisting; invoke QMT instrument details interface for double verification
                         full_code = f"{code}.SH"
                         detail = xtdata.get_instrument_detail(full_code)
                         
                         if not detail:
-                            offline_codes.append((f"ETF彻底摘牌下线", code))
+                            offline_codes.append((f"ETF completely delisted", code))
                         else:
                             expire_date_raw = detail.get('ExpireDate', 99999999)
                             try:
@@ -105,9 +105,9 @@ class StockService:
                                 expire_date = 99999999
                                 
                             if 0 < expire_date <= today_int:
-                                offline_codes.append((f"ETF已退市(退市日:{expire_date})", code))
+                                offline_codes.append((f"ETF delisted (Delisting Date: {expire_date})", code))
                             else:
-                                warn_codes.append((f"疑似异常:不在沪深基金板块中", code))
+                                warn_codes.append((f"Suspected Anomaly: Ticker absent from SSE/SZSE fund sector list", code))
                         
                 online_codes = []
                 clear_warn_codes = []
@@ -117,7 +117,7 @@ class StockService:
                     if str(code).startswith('5') and code in sh_etfs:
                         if status != 1 and status != -100:  # Covers status=0, status=-1 etc, but ignore -100
                             online_codes.append(code)
-                        elif "疑似异常" in remark:
+                        elif "Suspected Anomaly" in remark:
                             clear_warn_codes.append(code)
                         
                 if new_codes:
@@ -126,61 +126,61 @@ class StockService:
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
                     cursor.executemany(insert_sql, new_codes)
-                    logger.info(f"成功新增插入了 {len(new_codes)} 个新的上交所ETF")
+                    logger.info(f"Successfully inserted {len(new_codes)} new SSE ETFs")
                     
                 if offline_codes:
                     update_sql = "UPDATE stock SET status = 0, remark = %s, updated_at = NOW() WHERE code = %s"
                     cursor.executemany(update_sql, offline_codes)
-                    logger.info(f"将 {len(offline_codes)} 个已明确退市或摘牌的上交所ETF标记为 status=0")
+                    logger.info(f"Marked {len(offline_codes)} delisted/terminated SSE ETFs with status=0")
                     
                 if warn_codes:
                     warn_sql = "UPDATE stock SET remark = %s, updated_at = NOW() WHERE code = %s"
                     cursor.executemany(warn_sql, warn_codes)
-                    logger.warning(f"发现 {len(warn_codes)} 个在库ETF未出现在板块列表中，已写入remark警告。")
+                    logger.warning(f"Found {len(warn_codes)} database ETFs missing from sector lists; logged warning remarks.")
                     
                 if online_codes:
-                    update_online_sql = "UPDATE stock SET status = 1, remark = 'ETF重新上线', updated_at = NOW() WHERE code = %s"
+                    update_online_sql = "UPDATE stock SET status = 1, remark = 'ETF Re-activated', updated_at = NOW() WHERE code = %s"
                     cursor.executemany(update_online_sql, [(code,) for code in online_codes])
-                    logger.info(f"将 {len(online_codes)} 个重新上线(包含status=-1等)的上交所ETF标记为 status=1")
+                    logger.info(f"Marked {len(online_codes)} re-activated SSE ETFs with status=1")
                     
                 if clear_warn_codes:
                     clear_sql = "UPDATE stock SET remark = NULL, updated_at = NOW() WHERE code = %s"
                     cursor.executemany(clear_sql, [(code,) for code in clear_warn_codes])
-                    logger.info(f"成功清除了 {len(clear_warn_codes)} 个恢复正常的ETF异常警告备注")
+                    logger.info(f"Cleared warnings for {len(clear_warn_codes)} back-to-normal ETFs")
                     
                 if not new_codes and not offline_codes and not online_codes and not warn_codes and not clear_warn_codes:
-                    logger.info("数据库已是最新，无需维护更新")
+                    logger.info("Database is already up to date. No updates required.")
                     
             conn.commit()
         except Exception as e:
             conn.rollback()
-            logger.error(f"维护上交所ETF数据失败: {e}")
+            logger.error(f"Failed to maintain SSE ETF records: {e}")
         finally:
             conn.close()
 
     def load_all_stock_codes(self):
-        last_id = 0  # 初始锚点
+        last_id = 0  # Initial anchor ID
         batch_size = 500
         total_processed = 0
         while True:
-            # 1. 获取当前批次
+            # 1. Retrieve current batch
             stocks = stock.get_stock_batch(self.db, last_id, batch_size)
-            # 异常处理：如果返回 None 说明数据库连接或查询报错
+            # Exception: If None returned, DB connection/query errored
             if stocks is None:
-                print("查询过程中出现错误，终止处理。")
+                print("Error occurred during query. Aborting process.")
                 break
-            # 2. 检查是否还有数据：如果结果集为空，说明已经查完了
+            # 2. Check for data: If result set is empty, query is complete
             if not stocks:
-                print("所有数据处理完毕。")
+                print("All data processed successfully.")
                 break
-            # 3. 处理当前批次的数据
+            # 3. Process current batch records
             for detail in stocks:
                 self.stock_codes.append(detail['code'])
             last_id = stocks[-1]['id']
             total_processed += len(stocks)
-            print(f"已加载 {total_processed} 条数据，当前 ID 锚点: {last_id}")
+            print(f"Loaded {total_processed} records. Current ID anchor: {last_id}")
 
-        print(f"最终共加载 {total_processed} 条记录。")
+        print(f"Total loaded records: {total_processed}")
 
     def format_code(self):
         for code in self.stock_codes:
@@ -195,10 +195,10 @@ class StockService:
         for i in range(0, len(self.format_codes), batch_size):
             batch_codes = self.format_codes[i: i + batch_size]
             seq = xtdata.subscribe_whole_quote(batch_codes, callback=self.stocks_handler)
-            logger.info(f"批次 {i // batch_size + 1} 订阅成功，包含 {len(batch_codes)} 只股票，订阅ID: {seq}")
+            logger.info(f"Batch {i // batch_size + 1} subscription successful. Tickers count: {len(batch_codes)}, Sub ID: {seq}")
             time.sleep(2)
         time.sleep(1)
-        logger.info("所有批次订阅请求发送完毕")
+        logger.info("All subscription batch requests dispatched.")
 
     def stocks_handler(self, msgs):
         update_data = []
@@ -209,30 +209,30 @@ class StockService:
         if update_data:
             stock.batch_update_stock_price(self.db, update_data)
             logger.info(f"Batch update successful: {len(update_data)} stocks")
-        logger.info(f"{len(update_data)} 条数据 updated successful")
+        logger.info(f"{len(update_data)} records updated successfully")
 
     def update_index_daily_history(self, fund_spider_cookie):
         """
-        发起批量订阅，获取指数全量快照数据
+        Dispatch batch subscriptions to fetch full index snapshots
         """
-        # 假设你已经有了一个类似 load_all_index_codes 的方法将代码存入了 self.index_codes
-        # 如果没有，可以直接写死你要追踪的三大指数/宽基指数
+        # Assumption: index_codes contains codes populated by a method like load_all_index_codes
+        # Otherwise, default to standard benchmarks
         self.success_indices_set = set()
         self.index_codes = stock.get_unique_index_codes(self.db)
         benchmark_indices = ['000001', '399001', '000300']
         for code in benchmark_indices:
             if code not in self.index_codes:
                 self.index_codes.append(code)
-        # 2. 格式化代码 (复用你的 utils，确保符合 xtdata 要求)
+        # 2. Format codes (reuse utils to align with xtdata specifications)
         formatted_indices = [utils.enhance_stock_code(code, "index") for code in self.index_codes]
 
-        # 3. 分批订阅 (指数数量通常不多，但为了代码健壮性依然保留分批逻辑)
+        # 3. Batch subscription (index count is small, but keep batch logic for safety)
         batch_size = 50
         for i in range(0, len(formatted_indices), batch_size):
             batch_codes = formatted_indices[i: i + batch_size]
             seq = xtdata.subscribe_whole_quote(batch_codes, callback=self.indices_handler)
-            logger.info(f"指数批次 {i // batch_size + 1} 订阅成功，包含 {len(batch_codes)} 个指数，订阅ID: {seq}")
-            time.sleep(1)  # 指数数据量小，稍微缩短 sleep 时间即可
+            logger.info(f"Index batch {i // batch_size + 1} subscribed. Index count: {len(batch_codes)}, Sub ID: {seq}")
+            time.sleep(1)  # Lower latency sleep interval since index datasets are small
             
         # --- NEW: Get all active ETFs and subscribe ---
         conn = self.db.get_connection()
@@ -246,128 +246,128 @@ class StockService:
             for i in range(0, len(formatted_etfs), batch_size):
                 batch_codes = formatted_etfs[i: i + batch_size]
                 seq = xtdata.subscribe_whole_quote(batch_codes, callback=self.etf_handler)
-                logger.info(f"ETF批次 {i // batch_size + 1} 订阅成功，包含 {len(batch_codes)} 个ETF，订阅ID: {seq}")
+                logger.info(f"ETF batch {i // batch_size + 1} subscribed. ETF count: {len(batch_codes)}, Sub ID: {seq}")
                 time.sleep(1)
         except Exception as e:
-            logger.error(f"查询ETF失败: {e}")
+            logger.error(f"Failed to query ETF codes: {e}")
         finally:
             cursor.close()
             conn.close()
-        logger.info("开始检查剩余指数部分，将通过第三方数据更新......")
+        logger.info("Verifying missing indexes. Initiating third-party data updates...")
         time.sleep(20)
-        # 1. 算差集：找出没收到的漏网之鱼
+        # 1. Set difference: identify missing items that failed to download
         rest_index_codes = list(set(formatted_indices) - self.success_indices_set)
 
         if rest_index_codes:
-            logger.warning(f"启动第三方兜底，处理 {len(rest_index_codes)} 个缺失指数: {rest_index_codes}")
+            logger.warning(f"Triggering third-party fallback for {len(rest_index_codes)} missing indices: {rest_index_codes}")
             third_party_update_data = []
             for code in rest_index_codes:
                 try:
                     clean_code = code.split('.')[0]
-                    # 2. 调用我们刚才写的同步强行阻断函数
-                    logger.info(f"正在通过第三方数据流抓取 {clean_code} 的快照...")
+                    # 2. Fetch via fallback spider
+                    logger.info(f"Fetching snapshot for {clean_code} via third-party interface...")
                     json_data = helper.spider.fetch_single_snapshot_safe(clean_code, fund_spider_cookie)
                     if not json_data:
-                        logger.warning(f"第三方接口未能获取到 {code} 的数据")
+                        logger.warning(f"Third-party API failed to return data for {code}")
                         continue
-                    # 3. 复用之前写的 JSON 清洗函数
+                    # 3. Re-use JSON parsing logic
                     parsed_rows = self.parse_third_party_index_json(clean_code, json_data, "EastMoney")
                     if parsed_rows:
                         third_party_update_data.extend(parsed_rows)
-                        logger.info(f"成功挽救 {clean_code} 数据。")
+                        logger.info(f"Successfully recovered data for {clean_code}.")
                 except Exception as e:
-                    logger.error(f"通过第三方获取指数 {code} 失败: {e}")
-                # 安全间隔，虽然我们马上切断了连接，但连续发起建连请求依然容易被风控
+                    logger.error(f"Third-party query failed for index {code}: {e}")
+                # Safety interval to prevent IP rate-limiting from third-party APIs
                 time.sleep(1)
-                # 批量入库
+                # Batch insert
             if third_party_update_data:
                 index_daily_history.batch_upsert_index_history(self.db, third_party_update_data, 'index')
-                logger.info(f"第三方兜底任务完成，成功挽救 {len(third_party_update_data)} 条数据")
+                logger.info(f"Third-party fallback complete. Recovered {len(third_party_update_data)} data rows.")
         else:
-            logger.info("完美！所有指数都已通过官方通道获取成功，无需调用第三方兜底。")
+            logger.info("Success! All indices fetched via official feeds. No fallback necessary.")
 
-        logger.info("所有批次订阅请求发送完毕")
-        #开始校验指数
+        logger.info("All subscription batch requests dispatched.")
+        # Validate index records
         updated_index_codes = index_daily_history.get_updated_index_codes_by_date(self.db, self.trade_date, 'index')
         if len(self.index_codes) == len(updated_index_codes):
-            logger.info(f"✅ 指数数据校验通过：预期 {len(self.index_codes)} 条，实际 {len(updated_index_codes)} 条。")
+            logger.info(f"✅ Index validation passed: Expected {len(self.index_codes)} rows, actual {len(updated_index_codes)} rows.")
         else:
-            # 找出缺失的具体代码
+            # Identify missing tickers
             missing_codes = set(self.index_codes) - set(updated_index_codes)
             alert_msg = (
-                f"交易日期: {self.trade_date}\n"
-                f"预期指数数量: {len(self.index_codes)}\n"
-                f"实际指数数量: {len(updated_index_codes)}\n"
-                f"缺失差额: {len(missing_codes)}\n"
-                f"缺失列表: {list(missing_codes)[:10]}..."  # 仅展示前10个防止刷屏
+                f"Trading Date: {self.trade_date}\n"
+                f"Expected Index Count: {len(self.index_codes)}\n"
+                f"Actual Index Count: {len(updated_index_codes)}\n"
+                f"Missing Count: {len(missing_codes)}\n"
+                f"Missing List: {list(missing_codes)[:10]}..."
             )
-            notifier.send_telegram_alert("🚨 【更新指数数据缺失报警】", alert_msg)
+            notifier.send_telegram_alert("🚨 [Alert: Missing Index Data Update]", alert_msg)
             logger.error(alert_msg)
 
-        #开始校验ETF
+        # Validate ETF records
         updated_etf_codes = index_daily_history.get_updated_index_codes_by_date(self.db, self.trade_date, 'etf')
         if len(etf_codes) == len(updated_etf_codes):
-            logger.info(f"✅ ETF数据校验通过：预期 {len(etf_codes)} 条，实际 {len(updated_etf_codes)} 条。")
+            logger.info(f"✅ ETF validation passed: Expected {len(etf_codes)} rows, actual {len(updated_etf_codes)} rows.")
         else:
-            # 找出缺失的具体代码
+            # Identify missing tickers
             missing_etfs = set(etf_codes) - set(updated_etf_codes)
             alert_msg = (
-                f"交易日期: {self.trade_date}\n"
-                f"预期ETF数量: {len(etf_codes)}\n"
-                f"实际ETF数量: {len(updated_etf_codes)}\n"
-                f"缺失差额: {len(missing_etfs)}\n"
-                f"缺失列表: {list(missing_etfs)[:10]}..."  # 仅展示前10个防止刷屏
+                f"Trading Date: {self.trade_date}\n"
+                f"Expected ETF Count: {len(etf_codes)}\n"
+                f"Actual ETF Count: {len(updated_etf_codes)}\n"
+                f"Missing Count: {len(missing_etfs)}\n"
+                f"Missing List: {list(missing_etfs)[:10]}..."
             )
-            notifier.send_telegram_alert("🚨 【更新ETF数据缺失报警】", alert_msg)
+            notifier.send_telegram_alert("🚨 [Alert: Missing ETF Data Update]", alert_msg)
             logger.error(alert_msg)
-        # 计算惩罚值
+        # Compute volatility penalties
         self.calculate_and_save_daily_penalty(self.trade_date)
 
     def calculate_and_save_daily_penalty(self, trade_date):
         """
-        盘后执行：组装过去3天的数据字典，喂给核心引擎计算惩罚值并落盘
-        优化：取波动最大的两天计算，过滤掉波动最小的一天
-        支持新加入的标的（数据不足3天时有多少算多少）
+        Post-market execution: Compile a 3-day history dictionary, feeds it to core engine to calculate penalty rates, and writes to DB.
+        Optimization: Evaluates the two days with maximum volatility, discarding the least volatile day.
+        Supports newly added assets (computes with available days if data is less than 3 days).
         """
         conn = self.db.get_connection()
         try:
             rows = index_daily_history.get_3_days_history_list(self.db, trade_date)
             if rows is None:
-                logger.warning("无历史数据，跳过惩罚值计算")
+                logger.warning("No historical data found. Skipping penalty calculations.")
                 return
-            # 3. 在内存中将数据按指数代码分组整理
-            # 格式: {'000001.SH': [0.001, -0.002, 0.005], ...}
+            # 3. Group data by index code in memory
+            # Layout: {'000001.SH': [0.001, -0.002, 0.005], ...}
             history_map = defaultdict(list)
             for row in rows:
                 code, t_date, amplitude = row
                 history_map[code].append(float(amplitude))
-            # 4. 提取基准指数的波动率列表 (构建 index_rates_list)
-            # 假设你的三大宽基指数是这三个，如果没有数据则跳过
+            # 4. Extract benchmark volatility series (construct index_rates_list)
+            # Assumption: standard benchmark indices are used. Skip if data missing.
             benchmarks = ['000001', '399001', '000300']
             index_rates_list = []
             for bm_code in benchmarks:
                 if bm_code in history_map and len(history_map[bm_code]) >= 1:
                     index_rates_list.append(history_map[bm_code])
                 else:
-                    logger.warning(f"{bm_code}指数数据不足，跳过该基准")
-            # 5. 遍历所有跟踪的指数，喂入你的核心引擎
+                    logger.warning(f"Insufficient data for benchmark index {bm_code}. Skipping benchmark.")
+            # 5. Process tracked indices and feed into the core engine
             update_penalty_data = []
             for code, fund_rates in history_map.items():
                 if len(fund_rates) >= 1:
-                    # 第一步：计算超额波动（支持1~3天，取波动最大的两天）
+                    # Step 1: Calculate excess volatility (evaluates up to 3 days, selects the top 2 days)
                     excess_vol = calc_daily_excess_volatility_batch(fund_rates, index_rates_list)
-                    # 第二步：计算最终惩罚值
+                    # Step 2: Compute final penalty value
                     penalty = get_penalty(excess_vol)
-                    # 组装批量更新元组
+                    # Pack into batch update tuple
                     update_penalty_data.append((round(penalty, 4), code, trade_date))
                     if len(fund_rates) < 3:
-                        logger.info(f"[{code}] 仅有 {len(fund_rates)} 天数据，仍参与惩罚值计算")
-            # 6. 批量更新惩罚值到数据库
+                        logger.info(f"[{code}] Has only {len(fund_rates)} days of data. Proceeding with penalty calculation.")
+            # 6. Batch update penalty rates in database
             if update_penalty_data:
                 index_daily_history.update_penalty_data(self.db, update_penalty_data)
-                logger.info(f"成功调用核心引擎计算并更新 {len(update_penalty_data)} 个指数的惩罚值！")
+                logger.info(f"Successfully computed and updated penalty values for {len(update_penalty_data)} indices.")
         except Exception as e:
-            logger.error(f"计算历史惩罚值失败: {e}")
+            logger.error(f"Failed to compute historical penalty values: {e}")
             conn.rollback()
         finally:
             conn.close()
@@ -380,7 +380,7 @@ class StockService:
 
     def _process_tick_msgs(self, msgs, record_type):
         """
-        处理 xtdata 推送回来的指数数据，并拼装为批量入库格式
+        Process incoming index ticks from xtdata and format them for batch insertion
         """
         update_data = []
 
@@ -388,19 +388,19 @@ class StockService:
             tick = msgs[code]
 
             try:
-                # 1. 净化代码名称 (复用你现有的 utils)
+                # 1. Sanitize code names (reuse utils)
                 purified_code = helper.utils.purified_code(code)
 
-                # 2. 提取并格式化交易日期 (将毫秒时间戳转为 YYYY-MM-DD)
-                # 注意：如果遇到周末测试没有time字段，需做好容错
+                # 2. Extract and format trade dates (convert millisecond timestamps to YYYY-MM-DD)
+                # Tolerance handling: verify 'time' field exists (especially for weekend testing)
                 timestamp_ms = tick.get('time', 0)
                 if timestamp_ms == 0:
-                    continue  # 无效数据跳过
+                    continue  # Skip invalid data
                 trade_date = datetime.datetime.fromtimestamp(timestamp_ms / 1000.0).strftime('%Y-%m-%d')
                 if self.trade_date == "":
                     self.trade_date = trade_date
 
-                # 3. 提取基础盘口数据
+                # 3. Extract L1 orderbook details
                 close_price = tick.get('lastPrice', 0.0)
                 pre_close = tick.get('lastClose', 0.0)
                 open_price = tick.get('open', 0.0)
@@ -409,49 +409,48 @@ class StockService:
                 volume = tick.get('volume', 0)
                 amount = tick.get('amount', 0.0)
 
-                # 4. 预计算核心风控参数：当日真实涨跌幅
+                # 4. Pre-calculate risk parameters: actual daily percentage change
                 if pre_close and pre_close > 0:
                     vol_rate = round((close_price - pre_close) / pre_close, 4)
                 else:
                     vol_rate = 0.0
 
-                # 5. 组装为 tuple，严格对齐 batch_upsert_index_history 的参数顺序
+                # 5. Pack as tuple, matching parameter order of batch_upsert_index_history
                 row_tuple = (purified_code, trade_date, close_price, pre_close, open_price, high_price, low_price, vol_rate, volume, amount, 'QMT')
                 update_data.append(row_tuple)
                 if not hasattr(self, 'success_indices_set') and record_type == 'index':
                     self.success_indices_set = set()
                 if record_type == 'index':
-                    # 注意：这里记录的是未净化的原始订阅 code，方便后续算差集
+                    # Note: Record raw unsubscribed code to identify set differences later
                     self.success_indices_set.add(code)
 
             except Exception as e:
-                logger.error(f"处理数据 {code} 推送数据时解析异常: {e}")
+                logger.error(f"Exception during processing tick feed for {code}: {e}")
                 continue
-        # 6. 调用批量更新函数入库
+        # 6. Invoke batch upsert interface
         if update_data:
-            # 假设 self.db 是你的 pymysql connection
             index_daily_history.batch_upsert_index_history(self.db, update_data, record_type)
             logger.info(f"Batch upsert successful: {len(update_data)} {record_type} records")
 
     def parse_third_party_index_json(self, index_code, json_data, data_source):
         """
-        解析第三方 (如东方财富) 的指数 JSON 数据，返回适配批量入库的格式
+        Parse index JSON data from third-party APIs (e.g. EastMoney) and return formatted tuples for batch insertion.
 
-        :param json_data: dict, 第三方接口返回的完整 JSON 字典
-        :return: list[tuple], 包含单条数据的列表，可直接传给 batch_upsert_index_history。解析失败返回空列表。
+        :param json_data: dict, Complete response JSON from third-party API
+        :return: list[tuple], Single-row list containing parsed records, ready for batch_upsert_index_history. Returns empty list if parsing fails.
         """
         try:
-            # 获取核心数据域
+            # Retrieve core data payload
             data = json_data.get("data")
             if not data:
-                logger.warning("第三方数据中未找到 'data' 字段")
+                logger.warning("No 'data' field found in third-party payload")
                 return []
             timestamp_sec = data.get("f86", 0)
             if timestamp_sec == 0:
                 return []
             trade_date = datetime.datetime.fromtimestamp(timestamp_sec).strftime('%Y-%m-%d')
 
-            # 3. 提取 OHLCV 数据 (注意：价格需要除以 100 还原真实小数)
+            # 3. Extract OHLCV data (Note: price values are scaled by 100 in raw payload, divide by 100)
             close_price = data.get("f43", 0) / 100.0  # 最新价
             high_price = data.get("f44", 0) / 100.0  # 最高价
             low_price = data.get("f45", 0) / 100.0  # 最低价
@@ -461,20 +460,18 @@ class StockService:
             volume = data.get("f47", 0)  # 成交量
             amount = data.get("f48", 0.0)  # 成交额
 
-            # 4. 计算当日核心风控参数：真实涨跌幅
+            # 4. Calculate daily price change rate
             if pre_close and pre_close > 0:
                 vol_rate = round((close_price - pre_close) / pre_close, 4)
             else:
                 vol_rate = 0.0
 
-            # 5. 严格对齐 batch_upsert_index_history 要求的字段顺序
+            # 5. Match parameter order required by batch_upsert_index_history
             row_tuple = (index_code, trade_date, close_price, pre_close, open_price, high_price, low_price, vol_rate, volume, amount, data_source)
 
-            # 包装成 List 返回，以便直接复用批量 Upsert 接口
+            # Pack as list to reuse batch upsert interface
             return [row_tuple]
 
         except Exception as e:
-            logger.error(f"解析第三方指数数据失败: {e}, 原始数据: {json_data}")
+            logger.error(f"Failed to parse third-party index data: {e}, raw: {json_data}")
             return []
-
-

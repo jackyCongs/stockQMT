@@ -5,24 +5,24 @@ import time
 from helper.time_utils import get_time, get_datetime
 
 
-# 传参毫秒级
+# Accepts timestamp in milliseconds
 def transfer_date(timestamp):
-    # 转换为秒
+    # Convert to seconds
     timestamp_sec = timestamp / 1000
-    # 再转换为日期
+    # Convert to date
     dt = datetime.fromtimestamp(timestamp_sec)
-    # 输出: 2025-03-07
+    # Output: 2025-03-07
     return dt.strftime('%Y-%m-%d')
 
 def transfer_time(timestamp):
-    # 转换为秒
+    # Convert to seconds
     timestamp_sec = timestamp / 1000
-    # 转换为日期时间对象
+    # Convert to datetime object
     dt = datetime.fromtimestamp(timestamp_sec)
-    # 输出示例: 14:30:05
+    # Output example: 14:30:05
     return dt.strftime('%H:%M:%S')
 
-# 今天是否是交易日
+# Check if today is a trading day
 def is_today_trading():
     current_date = get_datetime().strftime("%Y%m%d")
     trading_dates = xtdata.get_trading_dates("SZ", current_date, current_date)
@@ -45,10 +45,10 @@ def get_past_date_str(days_back: int = 15):
 
 def format_date_fast(date_input) -> str:
     """
-    极速格式化日期 (O(1) 复杂度)
-    入参可以是字符串 '20260324' 或整数 20260324
+    High-performance date formatter (O(1) complexity).
+    Input can be string '20260324' or integer 20260324.
     """
-    # 强制转换为字符串，防止传入的是整数
+    # Force convert to string to handle integer inputs
     s = str(date_input)
-    # 直接通过切片拼接: 前4位 + '-' + 中间2位 + '-' + 后2位
+    # Slice and concatenate: YYYY + '-' + MM + '-' + DD
     return f"{s[:4]}-{s[4:6]}-{s[6:]}"

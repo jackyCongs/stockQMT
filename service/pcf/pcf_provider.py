@@ -7,26 +7,26 @@ import pandas as pd
 
 class PcfProvider(ABC):
     """
-    PCF 数据提供者抽象基类。
-    定义统一的接口：get_basic_info / get_components，
-    由上交所 (SsePcfProvider) 和深交所 (SzsePcfProvider) 子类实现。
+    Abstract base class for PCF (Portfolio Composition File) data providers.
+    Defines unified interfaces: get_basic_info / get_components.
+    Implemented by SsePcfProvider (SSE) and SzsePcfProvider (SZSE) subclasses.
     """
 
     def __init__(self, pcf_fetch_failures: list | None = None):
         """
         Args:
-            pcf_fetch_failures: 由外部 Service 传入的共享列表，
-                                子类在拉取失败时往里追加 (fund_code, reason) 元组。
+            pcf_fetch_failures: Shared list passed from external services.
+                                Subclasses append (fund_code, reason) tuples upon fetch failures.
         """
         self.pcf_fetch_failures = pcf_fetch_failures if pcf_fetch_failures is not None else []
-        # 项目根目录：service/pcf/ → service/ → project_root
+        # Project root directory path calculation
         self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    # ─── 公共工具方法 ───────────────────────────────────────────────
+    # ─── Public Utility Methods ───────────────────────────────────────────
 
     @staticmethod
     def clean_float(val) -> float:
-        """清洗并解析浮点数字符串，兼容清除 ￥、元、逗号千分符等货币单位"""
+        """Clean and parse float strings, handling currency symbols like ￥, Yuan, commas, etc."""
         if not val:
             return 0.0
         val = str(val).replace('￥', '').replace('元', '').replace(',', '').strip()
@@ -37,7 +37,7 @@ class PcfProvider(ABC):
 
     @staticmethod
     def get_market_by_stock_code(code: str) -> str:
-        """根据证券代码前缀自动识别其所属市场 ID"""
+        """Identify market ID based on stock code prefix"""
         if code.startswith(('60', '68', '90')):
             return "101"  # 上海市场 (.SH)
         elif code.startswith(('00', '30', '20')):
@@ -47,20 +47,20 @@ class PcfProvider(ABC):
         return "101"  # 默认上海
 
     def _get_pcf_dir(self) -> str:
-        """获取当天的 PCF 缓存目录，不存在则自动创建"""
+        """Get the PCF cache directory for today, creating it if it doesn't exist"""
         today_str = datetime.datetime.now().strftime("%Y%m%d")
         pcf_dir = os.path.join(self.project_root, "files", "pcf", today_str)
         os.makedirs(pcf_dir, exist_ok=True)
         return pcf_dir
 
-    # ─── 抽象接口 ──────────────────────────────────────────────────
+    # ─── Abstract Interfaces ──────────────────────────────────────────────
 
     @abstractmethod
     def get_basic_info(self, fund_code: str) -> dict | None:
-        """获取 ETF 申赎清单基本信息（现金差额、净值等）"""
+        """Get basic ETF Portfolio Composition File (PCF) metadata (cash component, unit NAV, etc.)"""
         ...
 
     @abstractmethod
     def get_components(self, fund_code: str) -> pd.DataFrame | None:
-        """获取 ETF 申赎清单成分股列表"""
+        """Get ETF PCF components dataframe"""
         ...
