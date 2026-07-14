@@ -3,7 +3,7 @@ import time
 
 
 def add(db,order_id,strategy_name,stock_code, bid_price, bid_num, target_start, remark, status):
-    # 连接到数据库
+    # Connect to the database
     conn = db.get_connection()
     cursor = conn.cursor()
     try:
@@ -43,15 +43,15 @@ def find(db, order_id):
     conn = db.get_connection()
     cursor = conn.cursor()
     try:
-        # 构建查询语句，选择所有字段
+        # Construct query statement selecting all fields
         query = "SELECT * FROM strategy_records WHERE order_id = %s"
-        # 执行查询
+        # Execute query
         cursor.execute(query, (order_id,))
 
-        # 获取查询结果
+        # Retrieve query results
         result = cursor.fetchone()
         if result:
-            # 将结果转换为字典，字段名称作为键
+            # Map query results to dictionary with column names as keys
             column_names = [desc[0] for desc in cursor.description]
             result_dict = dict(zip(column_names, result))
             return result_dict
@@ -69,15 +69,15 @@ def find_last_by_code(db, stock_code):
     conn = db.get_connection()
     cursor = conn.cursor()
     try:
-        # 构建查询语句，选择所有字段
+        # Construct query statement selecting all fields
         query = "SELECT * FROM strategy_records WHERE stock_code = %s order by id desc limit 1"
-        # 执行查询
+        # Execute query
         cursor.execute(query, (stock_code,))
 
-        # 获取查询结果
+        # Retrieve query results
         result = cursor.fetchone()
         if result:
-            # 将结果转换为字典，字段名称作为键
+            # Map query results to dictionary with column names as keys
             column_names = [desc[0] for desc in cursor.description]
             result_dict = dict(zip(column_names, result))
             return result_dict

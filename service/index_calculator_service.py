@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 class IndexReplicationCalculator:
     """
-    AlphaCore 盘前总引擎 (终极融合防弹版)
-    负责：文件解析计算 -> 数据库增量对齐 -> 组装下发 JSON -> 唤醒 QMT 行情订阅
+    AlphaCore Pre-market Main Engine (Ultimate Robust Edition)
+    Responsible for: File Parsing & Calculation -> Database Incremental Alignment -> JSON Assembly & Output -> Wakeup QMT Subscription
     """
 
     def __init__(self, db_pool, base_capital=1000000000):
@@ -29,10 +29,10 @@ class IndexReplicationCalculator:
 
     @staticmethod
     def format_component_code(raw_code):
-        """【共享工具】成分股(个股)专用 QMT 后缀补全逻辑"""
+        """[Shared Utility] QMT ticker suffix completion logic for index components"""
         raw_str = str(raw_code).strip().split('.')[0]
         
-        # 港股通股票通常为 5 位数，无需补齐 6 位
+        # HK Stock Connect tickers are typically 5 digits, no need to pad to 6 digits
         if len(raw_str) == 5 and raw_str.isdigit():
             return f"{raw_str}.HK"
             
@@ -47,17 +47,17 @@ class IndexReplicationCalculator:
 
     def _ensure_history_data(self, stock_list, period, start_time, end_time, max_retries=15):
         """
-        【神级对齐】带智能校验的强同步下载器，杜绝任何一只股票市值丢失！
+        [Precision Sync] Robust synchronous downloader with smart validation to prevent market cap data loss.
         """
         missing_stocks = set(stock_list)
 
-        logger.info(f"⏬ 开始校验并拉取 {len(missing_stocks)} 只标的的 {period} 行情...")
+        logger.info(f"⏬ Verifying and downloading {len(missing_stocks)} tickers of {period} market data...")
 
         for attempt in range(max_retries):
             if not missing_stocks:
                 break
 
-            # 1. 尝试从本地提取 (坚决用 'front' 前复权维持市值守恒！)
+            # 1. Attempt local extraction (strict 'front' adjustment to maintain market cap conservation)
             market_data = xtdata.get_market_data_ex(
                 field_list=['close'],
                 stock_list=list(missing_stocks),
@@ -67,10 +67,10 @@ class IndexReplicationCalculator:
                 dividend_type='front'
             )
 
-            # 2. 检查哪些没拿到
+            # 2. Check for missing tickers
             still_missing = set()
             for code in missing_stocks:
-                # 判断条件：没有这个键，或者为空 (说明数据还没下完落盘)
+                # Condition: Key missing or empty (indicates data downloading/writing is incomplete)
                 if code not in market_data or market_data[code].empty:
                     still_missing.add(code)
                 else:
@@ -83,15 +83,15 @@ class IndexReplicationCalculator:
                         still_missing.add(code)
 
             if not still_missing:
-                logger.info("✅ 所有标的历史数据已 100% 落盘，完美就绪！")
-                # 🟢 【Bug Fix】跳出前清空集合，防止外层误报 ERROR
+                logger.info("✅ All historical data has been successfully written to disk (100% complete)!")
+                # [Bug Fix] Clear collection before exit to prevent outer scope from reporting ERROR
                 missing_stocks = set()
                 break
 
             missing_stocks = still_missing
-            logger.warning(f"⏳ 第 {attempt + 1} 次校验: 尚有 {len(missing_stocks)} 只标的未就绪，正在补漏拉取...")
+            logger.warning(f"⏳ Verification attempt {attempt + 1}: {len(missing_stocks)} tickers not ready. Retrying download...")
 
-            # 3. 仅对缺失的股票发射异步下载指令
+            # 3. Dispatch asynchronous download requests only for missing tickers
             def dummy_cb(data):
                 pass
 
@@ -100,25 +100,25 @@ class IndexReplicationCalculator:
                     xtdata.download_history_data(qmt_code, period, start_time, end_time, dummy_cb)
                 except Exception:
                     pass
-                # 稍微限流，防止 QMT 底层 C++ 拥堵
+                # Rate limit slightly to prevent QMT C++ buffer congestion
                 if (i + 1) % 200 == 0:
                     time.sleep(0.1)
 
-            # 4. 强制等待 3 秒，给 C++ 写入本地缓存的时间，然后进入下一轮校验循环
+            # 4. Force wait 3 seconds to allow C++ to write to local cache before next loop
             time.sleep(3.0)
 
         if missing_stocks:
             logger.error(
-                f"⚠️ 警告！历经 {max_retries} 次重试，仍有 {len(missing_stocks)} 只股票(如 {list(missing_stocks)[:5]}) 无法获取数据，请检查是否退市！")
+                f"⚠️ Warning! After {max_retries} retries, {len(missing_stocks)} stocks (e.g. {list(missing_stocks)[:5]}) failed to return data (check if delisted)!")
 
     def _load_dataframe(self, file_path):
-        """统一且健壮的装甲加载器"""
+        """Unified and robust Excel/CSV data loader"""
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 return pd.read_excel(file_path)
         except ImportError as e:
-            logger.error(f"[环境错误] 缺少库: {e}，请运行 pip install xlrd openpyxl")
+            logger.error(f"[Environment Error] Missing libraries: {e}, run: pip install xlrd openpyxl")
             return pd.DataFrame()
         except Exception:
             for enc in ['gbk', 'utf-8', 'gb18030', 'latin1']:
@@ -131,7 +131,7 @@ class IndexReplicationCalculator:
             return pd.DataFrame()
 
     def _find_column(self, df, include_keywords, exclude_keywords=None):
-        """智能寻找对应的列名，支持排除特定关键字以免误判"""
+        """Smart column name matching with support for excluding specific keywords"""
         if exclude_keywords is None:
             exclude_keywords = []
 
@@ -144,16 +144,16 @@ class IndexReplicationCalculator:
         return None
 
     # =====================================================================
-    #  阶段一：洗盘计算层 (读取文件 -> 查停牌 -> 算虚拟股数 -> 存入数据库)
+    #  Phase 1: File parsing & data preparation (load file -> verify suspensions -> calculate synthetic weights -> database insert)
     # =====================================================================
     def process_all_indices(self):
-        """遍历所有下载的文件，计算并增量留痕入库"""
+        """Traverse all downloaded files, perform calculations, and write incremental audit logs to database"""
         if not os.path.exists(self.download_dir):
-            logger.error(f"下载目录不存在: {self.download_dir}")
+            logger.error(f"Download directory does not exist: {self.download_dir}")
             return
 
         files = [f for f in os.listdir(self.download_dir) if f.endswith(('.xls', '.xlsx'))]
-        logger.info(f"开始处理本地权重文件，共计 {len(files)} 个...")
+        logger.info(f"Processing local weight files. Total: {len(files)} files...")
 
         for file_name in files:
             parts = file_name.split('_')
@@ -173,7 +173,7 @@ class IndexReplicationCalculator:
             col_weight = self._find_column(df, ['权重', 'weight'])
 
             if not col_code or not col_weight:
-                logger.warning(f"[{index_code}] 文件缺少核心字段(成分券代码/权重)，跳过。")
+                logger.warning(f"[{index_code}] Missing key fields (component code/weight). Skipping file.")
                 continue
 
             qmt_stock_list = []
@@ -216,7 +216,7 @@ class IndexReplicationCalculator:
 
             db_date = f"{base_date_str[:4]}-{base_date_str[4:6]}-{base_date_str[6:]}"
 
-            # 【替换点 1】：洗盘计算时，如果遇到超大宽基(如中证1000/2000)，也使用安全分批下载
+            # [Optimization 1]: During data preparation, use safety-batched downloads for large broad-market indices (e.g. CSI 1000/2000)
             self._ensure_history_data(
                 stock_list=qmt_stock_list,
                 period='1d',
@@ -224,7 +224,7 @@ class IndexReplicationCalculator:
                 end_time=base_date_str
             )
 
-            # 注意：get_market_data_ex 是从本地硬盘/内存读取，不走网络，不存在并发死锁问题，无需分批
+            # Note: get_market_data_ex queries local storage/RAM without network IO, no lockups, batching unnecessary
             market_data = xtdata.get_market_data_ex(
                 field_list=['close'],
                 stock_list=qmt_stock_list,
@@ -242,10 +242,10 @@ class IndexReplicationCalculator:
                 detail = xtdata.get_instrument_detail(qmt_code)
                 if detail is None:
                     status = 0
-                    initial_remark = "盘前审计：QMT基础资料缺失/疑似退市"
+                    initial_remark = "Pre-market Audit: Missing QMT meta-info / suspected delisted"
                 else:
                     status = 1
-                    initial_remark = "官方在册：正常运作"
+                    initial_remark = "Official Active: Operating normally"
 
                 base_price = 0.0
                 is_suspended_on_base = False
@@ -270,9 +270,9 @@ class IndexReplicationCalculator:
                     synthetic_shares = (self.base_capital * actual_weight) / base_price
 
                     if is_suspended_on_base:
-                        initial_remark = "官方在册：基准日停牌(已自动追溯复牌前最后收盘价)"
+                        initial_remark = "Official Active: Suspended on base date (automatically trace back to last active close)"
                 else:
-                    initial_remark = "数据异常：向前追溯90天仍未能获取到任何有效价格"
+                    initial_remark = "Data Anomaly: No valid price returned within 90-day lookback"
 
                 record = {
                     'index_code': index_code,
@@ -291,23 +291,23 @@ class IndexReplicationCalculator:
             save_index_components(self.db_pool, index_code, db_records)
 
     # =====================================================================
-    #  阶段二：点火下发层 (拉取 DB 数据 -> 追溯昨收价算除数 -> 组装 JSON -> QMT 批量订阅)
+    #  Phase 2: Engine Ignition & Launch (pull DB data -> trace close prices -> calculate index divisor -> write JSON -> QMT subscribe)
     # =====================================================================
     def ignite_engine(self, yesterday_str):
         """
-        点火核心流程：从数据库拉取计算好的数据 -> 下发 JSON -> 唤醒 QMT 全量订阅
-        :param yesterday_str: 昨天交易日的字符串，格式 'YYYY-MM-DD' (如 '2026-05-18')
+        Core ignition workflow: fetch computed data from DB -> output JSON -> trigger QMT subscription.
+        :param yesterday_str: Date string for yesterday's trading day, format 'YYYY-MM-DD' (e.g. '2026-05-18')
         """
-        logger.info(f"\n=== [AlphaCore] 开始构建 Golang 引擎启动载荷 (T-1基准: {yesterday_str}) ===")
+        logger.info(f"\n=== [AlphaCore] Constructing Golang engine startup payload (T-1 baseline: {yesterday_str}) ===")
 
         components_map = get_active_components(self.db_pool)
         if not components_map:
-            logger.error("未找到任何有效成分股，点火中止！请先执行 process_all_indices()")
+            logger.error("No valid component stocks found. Ignition aborted! Please execute process_all_indices() first.")
             return
 
         pre_close_map = get_index_pre_close(self.db_pool, yesterday_str)
         if not pre_close_map:
-            logger.error(f"未能获取到 {yesterday_str} 的指数昨收数据，点火中止！")
+            logger.error(f"Failed to retrieve index previous close for {yesterday_str}. Ignition aborted!")
             return
 
         golang_payload = {}
@@ -324,14 +324,14 @@ class IndexReplicationCalculator:
         start_yest_dt = yest_dt - timedelta(days=90)
         start_yest_str = start_yest_dt.strftime('%Y%m%d')
 
-        # 【替换点 2】：全市场去重后几千只股票的终极大关卡！启用分批下载，彻底告别死锁！
+        # [Optimization 2]: Safety batching for large-scale multi-thousand stock downloads to avoid deadlocks.
         self._ensure_history_data(
             stock_list=subscribe_list,
             period='1d',
             start_time=start_yest_str,
             end_time=qmt_yesterday
         )
-        logger.info("强制等待 5 秒让底层数据落盘...")
+        logger.info("Waiting 5 seconds for underlying data to write to disk...")
         time.sleep(5.0)
 
         yesterday_market_data = xtdata.get_market_data_ex(
@@ -345,7 +345,7 @@ class IndexReplicationCalculator:
 
         for index_code, stock_list in components_map.items():
             if index_code not in pre_close_map:
-                logger.warning(f"[{index_code}] 缺失昨收点位，该指数将被移出今日计算序列。")
+                logger.warning(f"[{index_code}] Missing previous close point. Excluding index from today's active list.")
                 continue
 
             pre_close_point = pre_close_map[index_code]
@@ -374,7 +374,7 @@ class IndexReplicationCalculator:
                 if yesterday_price > 0:
                     yesterday_synthetic_market_cap += yesterday_price * qi
                 else:
-                    logger.warning(f"[{index_code}] 极度异常: 成分股 {qmt_code} 连续90天无交易数据，除数可能失真！")
+                    logger.warning(f"[{index_code}] Severe Anomaly: Component {qmt_code} has no trading data for 90 days. Divisor calculation may be distorted!")
 
             if pre_close_point > 0 and yesterday_synthetic_market_cap > 0:
                 divisor = yesterday_synthetic_market_cap / pre_close_point
@@ -390,16 +390,16 @@ class IndexReplicationCalculator:
         try:
             with open(self.export_path, 'w', encoding='utf-8') as f:
                 json.dump(golang_payload, f, ensure_ascii=False, indent=2)
-            logger.info(f"✅ 成功生成 AlphaCore 配置文件: {self.export_path}")
-            logger.info(f"   -> 包含成功挂载健康指数: {len(golang_payload)} 个")
+            logger.info(f"✅ Successfully generated AlphaCore config: {self.export_path}")
+            logger.info(f"   -> Healthy indices successfully mounted: {len(golang_payload)}")
         except Exception as e:
-            logger.error(f"JSON 配置文件下发失败: {e}")
+            logger.error(f"JSON configuration file output failed: {e}")
             return
 
     # =====================================================================
-    #  提供一个终极傻瓜式一键运行方法
+    #  Unified single-entry runner method
     # =====================================================================
     def run_daily_pipeline(self, yesterday_str):
-        """一键打包运行盘前的两大生命周期"""
+        """Run both pre-market life cycle phases in one click"""
         self.process_all_indices()
         self.ignite_engine(yesterday_str)

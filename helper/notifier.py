@@ -4,11 +4,11 @@ import time
 
 logger = logging.getLogger(__name__)
 
-# ============ Bark 配置 ============
+# ============ Bark Configuration ============
 BARK_KEY = 'D2XvyLTYAsW3VHEmgMSyz5'
 BARK_SERVER = 'https://api.day.app'
 
-# ============ 旧的 Telegram 配置 (已停用) ============
+# ============ Deprecated Telegram Configuration (Disabled) ============
 # TG_BOT_TOKEN = '8532693435:AAHqYr_XV4Sy6_ICDZESrJ3IKeEU01uHNsA'
 # TG_CHAT_ID = '8498114474'
 # PROXIES = {
@@ -20,53 +20,53 @@ BARK_SERVER = 'https://api.day.app'
 
 def send_bark_alert(title, content, max_retries=3):
     """
-    发送 Bark 推送通知到 iPhone (带重试机制)
-    :param title: 标题
-    :param content: 内容
-    :param max_retries: 最大重试次数，默认3次
+    Send Bark push notification to iPhone (with retry mechanism).
+    :param title: Message title
+    :param content: Message body content
+    :param max_retries: Maximum retry attempts, defaults to 3
     """
     url = f"{BARK_SERVER}/{BARK_KEY}"
 
     data = {
         "title": f"🚨 {title}",
         "body": content,
-        "sound": "alarm",       # 使用报警铃声，确保注意到
-        "group": "stockQMT",    # 消息分组，方便管理
-        "isArchive": "1",       # 自动保存到历史记录
+        "sound": "alarm",       # Use alarm sound to ensure alert is noticed
+        "group": "stockQMT",    # Message group for easy management
+        "isArchive": "1",       # Automatically archive message in history log
     }
 
-    # 重试循环
+    # Retry loop
     for attempt in range(1, max_retries + 1):
-        print("开始发送 Bark 消息通知...")
+        print("Sending Bark push notification...")
         try:
-            # 设置 10秒 超时，防止卡住主线程
+            # Set 10-second timeout to avoid blocking the main execution thread
             resp = requests.post(url, json=data, timeout=10)
 
             if resp.status_code == 200:
                 result = resp.json()
                 if result.get("code") == 200:
-                    logger.info(f"Bark 报警发送成功 (第{attempt}次尝试)")
-                    return True  # 发送成功，直接退出函数
+                    logger.info(f"Bark alert sent successfully (Attempt {attempt})")
+                    return True  # Exit early on successful transmission
                 else:
-                    logger.warning(f"Bark 发送失败: {result}")
+                    logger.warning(f"Bark delivery failed: {result}")
             else:
-                logger.warning(f"Bark 发送失败 (HTTP {resp.status_code}): {resp.text}")
+                logger.warning(f"Bark delivery failed (HTTP {resp.status_code}): {resp.text}")
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Bark 连接异常 (第{attempt}/{max_retries}次): {e}")
+            logger.warning(f"Bark connection exception (Attempt {attempt}/{max_retries}): {e}")
 
-        # 如果不是最后一次尝试，就等待几秒再试
+        # Wait a moment before retrying if there are remaining attempts
         if attempt < max_retries:
             time.sleep(1)
 
-    # 如果循环结束还没成功
-    logger.error("Bark 报警最终发送失败，已达到最大重试次数！")
+    # If retry loop exhausted without success
+    logger.error("Bark alert delivery failed. Maximum retry limit reached.")
     return False
 
 
-# 向后兼容：保留旧函数名，所有现有代码调用 send_telegram_alert() 无需任何修改
+# Backward compatibility: Retain the deprecated telegram function name alias
 send_telegram_alert = send_bark_alert
 
 
 if __name__ == '__main__':
-    send_bark_alert("测试", "这是一条来自 stockQMT 的测试通知")
+    send_bark_alert("Test Alert", "This is a test notification from stockQMT")

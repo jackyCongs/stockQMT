@@ -30,35 +30,35 @@ def enhance_stock_code(code, type='stock', ignore_warning = False):
         if code.startswith("9"):
             return f"{code}.SH"
         if not ignore_warning:
-            logger.warning(f"当前 code: {code}-{type}, 无对应来源")
+            logger.warning(f"Ticker [{code}] with type [{type}] has no corresponding market source.")
         return code
-    # 上证
+    # SSE (Shanghai Stock Exchange)
     if len(code) == 6 and (code.startswith('6') or code.startswith('900') or code.startswith('5')):
         return f"{code}.SH"
-    # 深证
+    # SZSE (Shenzhen Stock Exchange)
     elif len(code) == 6 and (code.startswith('00') or code.startswith('3') or code.startswith('158')
                              or code.startswith('159') or code.startswith('16')):
         return f"{code}.SZ"
-    # 北交所
+    # BSE (Beijing Stock Exchange)
     elif len(code) == 6 and code.startswith(('8', '4', '92', '93')):
         return f"{code}.BJ"
-    # 债券等其他品种（国债、企债、转债等）
+    # Bonds and other instruments (treasury bonds, corporate bonds, convertible bonds, etc.)
     elif len(code) == 6 and code.startswith(('11', '12', '13', '14', '17', '18', '19', '01', '02', '10')):
-        # 简单区分，123/127/128/112 通常是深交所，其余大概率是上交所
+        # Simple heuristic: prefix 123/127/128/112 is usually SZSE; otherwise, it is likely SSE
         if code.startswith(('123', '127', '128', '112')):
             return f"{code}.SZ"
         return f"{code}.SH"
-    logger.warning(f"当前 code: {code}-{type}, 无对应来源")
+    logger.warning(f"Ticker [{code}] with type [{type}] has no corresponding market source.")
     return code
 
 def is_normal_a_share(code):
     """
-    判断一个成分股是否是标准的 A 股正股。
-    排除债券、黄金、港股、美股、基金等。
-    标准A股前缀:
-    - 上海: 60, 68
-    - 深圳: 00, 30
-    - 北交所: 8, 4, 92, 93
+    Determine if a component stock is a standard A-share stock.
+    Excludes bonds, gold, HK stocks, US stocks, funds, etc.
+    Standard A-share prefix:
+    - Shanghai (SSE): 60, 68
+    - Shenzhen (SZSE): 00, 30
+    - Beijing (BSE): 8, 4, 92, 93
     """
     code_str = str(code).strip().split('.')[0]
     if not code_str.isdigit():
@@ -85,7 +85,7 @@ def get_derive_by_code(code, type = 'index'):
         return 2
     if code.startswith("399"):
         return 0
-    logger.info(f"当前指数 code: {code}-{type}, 无对应来源")
+    logger.info(f"Index [{code}] with type [{type}] has no corresponding market source.")
     return -1
 
 
@@ -103,9 +103,9 @@ def should_print(task_name, gap):
 
 
 def is_market_closing():
-    # 获取当前时间
+    # Get current time
     now = get_datetime()
-    # 0-4 表示周一至周五
+    # 0-4 represents Monday to Friday
     if now.weekday() >= 5:
         return True
     if MARKET_TIMES['morning_open'] <= now.time() <= MARKET_TIMES['morning_close']:

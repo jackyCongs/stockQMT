@@ -1,7 +1,7 @@
 # coding=utf-8
 import time
 def get_stock_list(db, inner_etf_type):
-    # 连接到数据库
+    # Connect to the database
     conn = db.get_connection()
     cursor = conn.cursor()
     row_dict_list = []
@@ -26,13 +26,13 @@ def get_stock_list(db, inner_etf_type):
 
 def get_stock_batch(db, last_id=0, limit=500):
     """
-    通过锚点 ID 分批获取股票数据
+    Retrieve stock data in batches using anchor IDs.
     """
     conn = db.get_connection()
     cursor = conn.cursor()
     row_dict_list = []
     try:
-        # 核心逻辑：使用 ID 过滤并排序，配合 LIMIT 控制步长
+        # Core logic: Filter and sort by ID, with LIMIT controlling step size
         query = """
             SELECT * FROM stock 
             WHERE id > %s and source = 'A'
@@ -42,14 +42,14 @@ def get_stock_batch(db, last_id=0, limit=500):
         cursor.execute(query, (last_id, limit))
         rows = cursor.fetchall()
 
-        # 获取列名并转为字典格式
+        # Retrieve column names and map rows to dictionaries
         column_names = [description[0] for description in cursor.description]
         for row in rows:
             row_dict_list.append(dict(zip(column_names, row)))
 
         return row_dict_list
     except Exception as e:
-        print(f"查询出错: {e}")
+        print(f"Query error: {e}")
         return None
     finally:
         cursor.close()
@@ -58,17 +58,17 @@ def get_stock_batch(db, last_id=0, limit=500):
 
 def get_unique_index_codes(db):
     """
-    查询所有需要追踪的、去重的目标指数代码 (target_worth_url)
-    条件：status=1 (正常), is_etf=1 (是ETF), 且 target_worth_url 非空
+    Query all unique target index codes (target_worth_url) that need to be tracked.
+    Criteria: status=1 (normal), is_etf=1 (is ETF), and target_worth_url is not empty.
 
-    :param db: 数据库连接管理对象 (假设包含 get_connection 方法)
-    :return: list[str], 包含所有去重后的指数代码列表。如果出错返回 None。
+    :param db: Database connection manager object
+    :return: list[str], containing all unique index codes. Returns None if an error occurs.
     """
     conn = db.get_connection()
     cursor = conn.cursor()
 
     try:
-        # 核心逻辑：使用 DISTINCT 去重，并加上 IS NOT NULL 和 != '' 过滤空值
+        # Core logic: Use DISTINCT to deduplicate, filtering out NULL and empty string values
         query = """
             SELECT DISTINCT target_worth_url 
             FROM stock 
@@ -81,20 +81,20 @@ def get_unique_index_codes(db):
         cursor.execute(query)
         rows = cursor.fetchall()
 
-        # rows 是一个包含 tuple 的 list，例如: [('931151',), ('399006',), ('399673',)]
-        # 我们通过列表推导式，将其扁平化为一个纯字符串列表
+        # rows is a list of tuples, e.g., [('931151',), ('399006',), ('399673',)]
+        # Flatten it to a pure string list via list comprehension
         index_codes = [row[0] for row in rows]
 
-        # 记录日志 (可选)
-        print(f"成功获取需要追踪的指数代码，共 {len(index_codes)} 个去重标的。")
+        # Logging (optional)
+        print(f"Successfully retrieved index codes to track. Total unique targets: {len(index_codes)}")
 
         return index_codes
 
     except Exception as e:
-        print(f"查询指数代码出错: {e}")
+        print(f"Error querying index codes: {e}")
         return None
     finally:
-        # 确保游标和连接被正确关闭
+        # Ensure cursor and connection are closed properly
         cursor.close()
         conn.close()
 
@@ -160,8 +160,8 @@ def batch_update_stock_price(db, data_list):
             sql_args.append(money)
             where_codes.append(code)
 
-        # 构建最终的 SQL 语句
-        # 注意：不再需要 limit 1，因为我们要更新多行
+        # Construct the final SQL query
+        # Note: limit 1 is no longer needed since we are updating multiple rows
         sql = f"""
             UPDATE stock 
             SET money = CASE code 
@@ -170,9 +170,9 @@ def batch_update_stock_price(db, data_list):
             updated_at = CURRENT_TIMESTAMP
             WHERE code IN ({','.join(['%s'] * len(where_codes))})
         """
-        # 将 WHERE IN 的参数拼接到参数列表中
+        # Append WHERE IN arguments to the parameter list
         sql_args.extend(where_codes)
-        # 执行这一条超长的 SQL
+        # Execute the long SQL query
         cursor.execute(sql, sql_args)
         conn.commit()
 
@@ -185,7 +185,7 @@ def batch_update_stock_price(db, data_list):
 
 
 def update(db, stock_name,stock_code,target_worth_name, remark):
-    # 连接到数据库
+    # Connect to the database
     conn = db.get_connection()
     cursor = conn.cursor()
     try:
@@ -195,13 +195,13 @@ def update(db, stock_name,stock_code,target_worth_name, remark):
                       "`remark` = %s, "
                       "`updated_at` = CURDATE() "
                       "WHERE `code` = %s")
-        # 打印一下当前的传参，方便调试
+        # Print current parameters for debugging
         params = (stock_name, target_worth_name, remark, stock_code)
-        print(f"正在更新数据: {params}")
-        # 执行更新
+        print(f"Updating data: {params}")
+        # Execute update
         cursor.execute(update_sql, params)
         conn.commit()
-        print("更新成功")
+        print("Update successful")
     except Exception as e:
         print('123456')
         print(e)

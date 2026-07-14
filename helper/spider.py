@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 class StopStreamException(Exception):
     pass
 
-# 获取场外基金最新的净值和净值时间
+# Retrieve the latest net worth and timestamp of off-market funds
 def get_last_net_worth(stock_code):
     try:
         url = f"https://fund.eastmoney.com/{str(stock_code)}.html"
         response = build_and_get(url)
         code = 200
-        msg = "获取成功"
+        msg = "Successfully retrieved"
         soup = BeautifulSoup(response.text, 'html.parser')
 
         bonus_date = None
         bonus_money = float('0')
 
-        # 解析分红数据
+        # Parse dividend payout data
         if soup.find('li', {'class': 'position_bonus'}):
             if soup.find('li', {'class': 'position_bonus'}).find("table", {'class': 'ui-table-hover'}):
                 if soup.find('li', {'class': 'position_bonus'}).find("table", {'class': 'ui-table-hover'}).find('tr'):
@@ -38,7 +38,7 @@ def get_last_net_worth(stock_code):
                         bonus_date = bonus_arr[0].text
                         bonus_money = float(match.group())
 
-        # 解析单位净值
+        # Parse unit net worth
         dl_blocks = soup.find('div', {'class': 'dataOfFund'}).find_all('dl', class_=re.compile(r'^dataItem0'))
 
         i = 1
@@ -51,7 +51,7 @@ def get_last_net_worth(stock_code):
         net_worth = detail_soup.find('dd', {'class': 'dataNums'}).find('span').text
         if isinstance(net_worth, (int, float)):
             code = 400
-            msg = "净值提取失败"
+            msg = "Failed to extract net worth"
 
         match = re.search(r'\((\d{4}-\d{2}-\d{2})\)', detail_soup.text)
         if match:
@@ -59,26 +59,26 @@ def get_last_net_worth(stock_code):
         else:
             net_worth_date = ''
             code = 400
-            msg = "净值日期正则提取失败"
+            msg = "Failed to extract net worth date via regex"
 
         return {'code': code, 'msg': msg, 'net_worth_date': net_worth_date, 'net_worth': net_worth, 'bonus_date': bonus_date,
                 'bonus_money': bonus_money}
     except Exception as e:
-        logging.error(f"解析净值错误: {stock_code}: {e}")
+        logging.error(f"Error parsing net worth for {stock_code}: {e}")
 
 def get_target_index(code):
     url = f"https://fund.eastmoney.com/{str(code)}.html"
     response = build_and_get(url)
     soup = BeautifulSoup(response.text, 'html.parser')
     td_tag = soup.find('td', {'class': 'specialData'})
-    print(f"get {code}")
+    print(f"Fetching fund data for code: {code}")
     raw_text = td_tag.get_text(strip=True)
     parts = raw_text.split('|')
-    # 提取跟踪标的（冒号后内容）
+    # Extract tracking target index (content after the colon)
     target_index = parts[0].split('：')[1].strip()
-    # 提取年化跟踪误差（冒号后内容）
+    # Extract annualized tracking error (content after the colon)
     annual_error = parts[1].split('：')[1].strip()
-    # 5. 输出结果
+    # 5. Return result
     return {"target_index": target_index, "annual_error": annual_error}
 
 def build_and_get(url, stream = False):
@@ -101,7 +101,7 @@ def stream_listener(index_code, cookie, process_func=lambda x, index_code: None)
 
     url = f"https://1.push2.eastmoney.com/api/qt/stock/sse?fields=f58,f734,f107,f57,f43,f59,f169,f170,f152,f46,f60,f44,f45,f47,f48,f19,f17,f531,f15,f13,f11,f20,f18,f16,f14,f12,f39,f37,f35,f33,f31,f40,f38,f36,f34,f32,f211,f212,f213,f214,f215,f210,f209,f208,f207,f206,f161,f49,f171,f50,f86,f168,f108,f167,f71,f292,f51,f52,f191,f192,f452,f177&secid={str(derive)}.{str(index_code)}"
 
-    # 构建请求头
+    # Construct request headers
     headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -123,31 +123,31 @@ def stream_listener(index_code, cookie, process_func=lambda x, index_code: None)
         try:
             with requests.get(url, headers=headers, timeout=10, stream=True) as resp:
                 if resp.status_code != 200:
-                    logger.error(f"状态码异常: {resp.status_code}，可能Cookie过期")
+                    logger.error(f"Abnormal HTTP status code: {resp.status_code}. Cookie may have expired.")
                     time.sleep(5)
                     continue
 
-                logger.info(f"连接成功，[{index_code}], 开始监听... ")
+                logger.info(f"Connected successfully, [{index_code}]. Starting stream listener...")
                 for line in resp.iter_lines(decode_unicode=True):
                     if line:
                         process_func(line, index_code)
 
         except RequestException as e:
-            logger.error(f"连接错误: {e}，5秒后重试")
+            logger.error(f"Connection error: {e}. Retrying in 5 seconds...")
             time.sleep(5)
         except KeyboardInterrupt:
-            logger.info("\n用户终止监听")
+            logger.info("\nStream listener terminated by user.")
             break
         except Exception as e:
-            logger.error(f"处理错误: {e}，继续监听")
+            logger.error(f"Processing error: {e}. Continuing listener stream...")
 
 def fetch_single_snapshot_safe(index_code, cookie):
     """
-    极其安全的单次快照获取：拿完即走，强制断开 TCP 连接，防封 IP。
+    Safe single-snapshot retrieval: fetch data and immediately terminate the TCP connection to prevent IP bans.
     """
-    # ⚠️ 注意：你需要去你的 spider.stream_listener 源码里，
-    # 把请求第三方数据的真实 URL 和 Headers 格式抄过来放到这里。
-    # 这里我写个通用的东方财富接口推测示例：
+    # Note: You should check your spider.stream_listener implementation,
+    # copy the actual URL and headers layout here.
+    # Below is a standard placeholder example targeting Eastmoney's API:
     derive = utils.get_derive_by_code(index_code)
     if derive == -1:
         return None
@@ -155,36 +155,34 @@ def fetch_single_snapshot_safe(index_code, cookie):
 
     headers = {
         "Cookie": cookie,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/142.0.0.0",
     }
     try:
-        # 关键 1：stream=True 允许我们按行读取，而不是等整个长连接结束（长连接永远不会结束）
-        # 关键 2：使用 with 语句，保证离开作用域时 response.close() 被绝对调用！
+        # Key 1: stream=True enables reading line-by-line without waiting for the connection to terminate (long-lived connections)
+        # Key 2: Using the 'with' statement guarantees response.close() is strictly invoked upon exiting scope
         with requests.get(url, headers=headers, stream=True, timeout=5) as response:
-            # 校验 HTTP 状态码
+            # Validate HTTP status code
             if response.status_code != 200:
-                logger.warning(f"获取 {index_code} 失败，HTTP 状态码: {response.status_code}")
+                logger.warning(f"Failed to retrieve snapshot for {index_code}. HTTP status code: {response.status_code}")
                 return None
-            # 逐行读取数据流
+            # Read response stream line-by-line
             for line in response.iter_lines():
                 if line:
                     decoded_line = line.decode('utf-8').strip()
-                    # 兼容 SSE 格式的 "data: " 前缀
+                    # Handle SSE format "data: " prefix compatibility
                     if decoded_line.startswith('data: '):
                         decoded_line = decoded_line[6:]
-                    # 解析 JSON
+                    # Parse JSON
                     try:
                         data_dict = json.loads(decoded_line)
-                        # 校验是否为有效快照数据
+                        # Verify if the payload is valid snapshot data
                         if "data" in data_dict and "f43" in data_dict["data"]:
-                            # 成功拿到！
-                            # return 会立刻跳出 with 语句块，requests 会在这瞬间光速掐断 TCP 连接
+                            # Successfully retrieved snapshot!
+                            # Return statement terminates the 'with' block, instantly closing the TCP connection
                             return data_dict
                     except json.JSONDecodeError:
                         continue
     except requests.exceptions.Timeout:
-        logger.warning(f"获取 {index_code} 超时，已安全断开连接")
-    except Exception as e:
         logger.error(f"安全抓取 {index_code} 时发生异常: {e}")
     return None
 

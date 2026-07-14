@@ -7,14 +7,14 @@ import threading
 from tqdm import tqdm
 
 '''
-实验记录：
-    1、尾盘涨停战法，收益率：-1.693%
-    2、跌停战法
+Experimental Records:
+    1. Late-session limit up strategy, yield: -1.693%
+    2. Limit down strategy
 
 '''
 
 
-# 校验数据收益率
+# Verify data yield / return metrics
 class ThreadRunner(threading.Thread):
     def __init__(self, db, code, result_map):
         threading.Thread.__init__(self)
@@ -30,15 +30,15 @@ class ThreadRunner(threading.Thread):
         current_capital = initial_capital
 
         while True:
-            # 计算每天第一条数据，要保证 start_time 1500结尾
-            # i 是连板的次数
+            # Calculate first data point for each day. Ensure start_time ends with 1500.
+            # i is the number of consecutive limit downs
             i = 0
             stock_day_start = market_data.find_next_data(self.db, stock_code, start_time)
             if stock_day_start is None:
                 break
             if stock_day_start['time'] >= '20240930':
                 break
-            # 这天收盘的数据，获取时间，用来后续循环获取下一天用
+            # Close data for this day. Get time to fetch the next day in the loop.
             stock_day_end = market_data.find_data(self.db, stock_code, stock_day_start['time'][:-4] + "1500")
 
             limit_up_price = round(stock_day_start['preClose'] * 1.1, 2)
@@ -52,13 +52,13 @@ class ThreadRunner(threading.Thread):
                     next_all_day_data = market_data.get_all_day(self.db, stock_code, next_day_start['time'])
                     if next_all_day_data is None:
                         break
-                    # 是否开过板
+                    # Whether the limit-down opened during the session
                     is_open = False
                     for three_day in next_all_day_data:
                         if three_day['high'] > limit_down_price and three_day['low'] <= limit_down_price:
                             is_open = True
                             break
-                    # 连续两天跌停，第三题触发跌停后买入，第4天收盘卖出
+                    # Limit down for 2 consecutive days, buy on 3rd day limit-down trigger, sell on 4th day close.
                     next_next_day_start = market_data.find_next_data(self.db, stock_code,
                                                                 next_day_start['time'][:-4] + "1500")
                     if next_next_day_start is not None and is_open:
@@ -70,21 +70,21 @@ class ThreadRunner(threading.Thread):
                         current_capital = round(current_capital * (1 + current_profit / 100) * (1 - (1+1+5)/10000), 2)
 
                         print(
-                            f"{stock_code} - {next_day_start['time'][:8]}以{limit_down_price}买入，次日{next_next_day_end['close']}卖出，"
-                            f"收益率{current_profit}%, 当前资金{current_capital}")
+                            f"{stock_code} - Bought at {limit_down_price} on {next_day_start['time'][:8]}, sold next day at {next_next_day_end['close']}, "
+                            f"yield {current_profit}%, current capital {current_capital}")
                     else:
                         break
             else:
                 i = 0
             start_time = stock_day_end['time']
 
-        # 将每个线程的结果存储到result_map中
+        # Save results of each thread in result_map
         self.result_map[stock_code] = (current_capital, transaction_count)
 
 
 def run(db):
     code_list = history_download.get_code_lists()
-    result_map = {}  # 存储每个代码的结果和交易次数
+    result_map = {}  # Store results and transaction counts for each ticker
 
     pbar = tqdm(total=len(code_list), desc="verifying...", mininterval=0.1)
 
@@ -101,7 +101,7 @@ def run(db):
             for t in threads:
                 t.join()
             threads = []
-    # 循环结束后，确保所有剩余线程都已完成
+    # Ensure all remaining threads are joined after the loop completes
     for t in threads:
         t.join()
 
@@ -114,10 +114,10 @@ def run(db):
         if transaction_count == 0:
             continue
         valid_stock_count += 1
-        print(f"股票代码：{code}, 资产价值：{value}元，收益率{round((value - 10000) / 10000 * 100, 2)}%")
+        print(f"Stock Code: {code}, Asset Value: {value} CNY, Yield: {round((value - 10000) / 10000 * 100, 2)}%")
         total_value += value
         total_transaction_count += transaction_count
 
-    print(f"总交易{total_transaction_count}次，有交易的stock数量{valid_stock_count}, 综合平均收益率: "
+    print(f"Total Transactions: {total_transaction_count}, Traded Stock Count: {valid_stock_count}, Overall Average Yield: "
           f"{round((total_value - (valid_stock_count * 10000)) / (valid_stock_count * 10000) * 100, 4)}%")
     exit()

@@ -2,7 +2,7 @@
 import time
 
 def add(db, trade, platform_name):
-    # 连接到数据库
+    # Connect to the database
     conn = db.get_connection()
     cursor = conn.cursor()
     try:

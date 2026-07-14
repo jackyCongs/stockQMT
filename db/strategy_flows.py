@@ -8,12 +8,12 @@ ALLOWED_FIELDS = [
 ]
 
 def insert_strategy_flow(connection, data):
-    # 过滤非法字段
+    # Filter invalid fields
     valid_data = {k: v for k, v in data.items() if k in ALLOWED_FIELDS}
     if not valid_data:
-        raise ValueError("无有效字段可插入")
+        raise ValueError("No valid fields to insert")
 
-    # 构建动态SQL
+    # Build dynamic SQL query
     fields = valid_data.keys()
     columns = ', '.join([f'`{f}`' for f in fields])
     placeholders = ', '.join(['%s'] * len(fields))
@@ -23,7 +23,7 @@ def insert_strategy_flow(connection, data):
             cursor.execute(sql, list(valid_data.values()))
         return cursor.lastrowid
     except Error as e:
-        print(f"插入失败: {e}")
+        print(f"Insertion failed: {e}")
         return None
 
 
@@ -34,7 +34,7 @@ def get_incomplete_flow_by_stock_code(connection, trans_sequence, stock_code, pl
             cursor.execute(sql, (trans_sequence, stock_code, platform,))
             return cursor.fetchone()
     except Error as e:
-        print(f"数据库查询失败: {e}")
+        print(f"Database query failed: {e}")
         return None
 
 
@@ -46,7 +46,7 @@ def get_by_max_flows_sequence(connection):
             result = cursor.fetchone()
             return result
     except Error as e:
-        print(f"数据库查询失败: {e}")
+        print(f"Database query failed: {e}")
         return None
 
 def get_by_max_flows_sequence_by_platform(connection, platform):
@@ -57,7 +57,7 @@ def get_by_max_flows_sequence_by_platform(connection, platform):
             result = cursor.fetchone()
             return result
     except Error as e:
-        print(f"数据库查询失败: {e}")
+        print(f"Database query failed: {e}")
         return None
 
 
@@ -69,7 +69,7 @@ def get_max_flows_trans_date(connection, platform):
             result = cursor.fetchone()
             return result['max_flows_date'] if result else None
     except Error as e:
-        print(f"数据库查询失败: {e}")
+        print(f"Database query failed: {e}")
         return None
 
 
@@ -87,24 +87,24 @@ def get_flow_by_trans_sequence(connection, trans_sequence, stock_code, platform)
             cursor.execute(sql, (trans_sequence, str(stock_code), platform,))
             return cursor.fetchone()
     except Error as e:
-        print(f"数据库查询失败: {e}")
+        print(f"Database query failed: {e}")
         return None
 
 
 def update_strategy_flow(connection, data, id_value):
-    # 过滤非法字段
+    # Filter invalid fields
     valid_data = {k: v for k, v in data.items() if k in ALLOWED_FIELDS}
     if not valid_data:
-        raise ValueError("无有效字段可更新")
+        raise ValueError("No valid fields to update")
 
-    # 构建动态SET子句
+    # Build dynamic SET clause
     set_clause = ', '.join([f'`{k}` = %s' for k in valid_data])
     sql = f"UPDATE strategy_flows SET {set_clause} WHERE id = %s"
     try:
         with connection.cursor(pymysql.cursors.DictCursor) as cursor:
-            # 参数顺序：更新字段的值 + ID值
+            # Parameter order: updated field values + ID value
             affected_rows = cursor.execute(sql, list(valid_data.values()) + [id_value])
         return affected_rows
     except Error as e:
-        print(f"更新失败: {e}")
+        print(f"Update failed: {e}")
         return None

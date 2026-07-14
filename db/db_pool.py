@@ -6,7 +6,7 @@ import threading
 import logging
 import configparser
 
-# 配置日志
+# Configure logging
 logger = logging.getLogger(__name__)
 
 
@@ -27,18 +27,18 @@ class DBPool:
         db_config = self.__db_config()
         if self._pool is None:
             self._pool = PooledDB(
-                creator=pymysql,  # 使用pymysql作为数据库驱动
-                maxconnections=20,  # 连接池允许的最大连接数
-                mincached=2,  # 初始化时，连接池中至少创建的空闲的连接，0表示不创建
-                maxcached=5,  # 连接池中最多闲置的连接，0和None不缓存
-                maxshared=3,  # 连接池中最多共享的连接数量，0和None表示全部共享
-                blocking=False,  # 连接池中如果没有可用连接后，是否阻塞等待
+                creator=pymysql,  # Use pymysql as database driver
+                maxconnections=20,  # Maximum number of connections allowed in the pool
+                mincached=2,  # Minimum idle connections created on pool initialization (0 means none)
+                maxcached=5,  # Maximum idle connections in the pool (0 or None means no caching)
+                maxshared=3,  # Maximum shared connections in the pool (0 or None means all shared)
+                blocking=False,  # Whether to block when no connections are available in the pool
                 ping=2,
                 setsession=[],
-                connect_timeout=3,  # 建立新连接最多等 3 秒
-                write_timeout=3,  # 发送 ping 包最多等 3 秒（解决僵尸连接卡死的主力）
+                connect_timeout=3,  # Maximum wait time for establishing a new connection (3 seconds)
+                write_timeout=3,  # Maximum wait time for sending ping packets (3 seconds, prevents zombie connections)
                 read_timeout=3,
-                **db_config  # 其他数据库连接参数
+                **db_config  # Other database connection parameters
             )
             logger.info("MySQL connection pool initialized.")
 

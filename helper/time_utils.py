@@ -4,22 +4,22 @@ from datetime import datetime, timedelta
 import time
 import threading
 
-# 时间快照列表：仅在尾部追加新快照，读取时只取最后一个（最新的）
+# Time snapshot list: new snapshots appended at the tail; reads only the last one (latest)
 _time_snapshots = [(time.time(), datetime.now())]
 
-# 配置参数
-UPDATE_INTERVAL = 0.02  # 20ms更新一次快照 → 最大时间延迟为10ms（保证实时性）
-MAX_SNAPSHOTS = 1000  # 最多保留1000个快照（仅用于控制内存占用，不影响实时性）
-KEEP_LATEST = 100  # 清理时保留最近100个快照（足够覆盖多个更新周期）
+# Configuration parameters
+UPDATE_INTERVAL = 0.02  # Updates snapshot every 20ms -> max delay is 10ms (guarantees real-time precision)
+MAX_SNAPSHOTS = 1000  # Maximum of 1000 snapshots retained (used to control memory usage, does not affect latency)
+KEEP_LATEST = 100  # Retain the last 100 snapshots during cleanup (sufficient to cover multiple update cycles)
 
 
 def get_time():
-    """返回最新快照的时间戳，延迟≤10ms（实时性保证）"""
+    """Returns the latest snapshot timestamp with delay <= 10ms (guarantees real-time precision)"""
     #return _time_snapshots[-1][0]
     return time.time()
 
 
 def get_datetime():
-    """返回最新快照的datetime对象，延迟≤10ms（实时性保证）"""
+    """Returns the latest snapshot datetime object with delay <= 10ms (guarantees real-time precision)"""
     #return _time_snapshots[-1][1]
     return datetime.now()

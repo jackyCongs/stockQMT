@@ -7,7 +7,7 @@ from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 
-start_date = '20200101'  # 格式"YYYYMMDD"，开始下载的日期，date = ""时全量下载
+start_date = '20200101'  # Format: "YYYYMMDD". Start date for download. When date = "", it performs full history download.
 end_date = ""
 period = "5m"
 pbar = tqdm(total=646, desc="writing...", mininterval=0.1)
@@ -15,42 +15,42 @@ pbar = tqdm(total=646, desc="writing...", mininterval=0.1)
 
 def my_download(stock_list: list, period: str, start_date='', end_date=''):
     '''
-    用于显示下载进度
+    Used to display download progress
     '''
     pbar = tqdm(total=len(stock_list), desc="downloading...", mininterval=0.1)
     n = 1
     num = len(stock_list)
     for i in stock_list:
-        #print(f"当前正在下载 {period} {n}/{num}{i}")
+        #print(f"Currently downloading {period} {n}/{num}{i}")
 
         xtdata.download_history_data(i, period, start_date, end_date, False)
         n += 1
         pbar.update(1)
-    print("下载任务结束")
+    print("Download task completed.")
     pbar.close()
 
 
 def worker(stock_code_queue, batch_size, db):
     while not stock_code_queue.empty():
         try:
-            # 获取一个stock_code
+            # Get a stock_code
             stock_code = stock_code_queue.get_nowait()
         except Exception as e:
             break
-        # 获取对应的数据
+        # Fetch corresponding market data
         msgs = xtdata.get_market_data_ex(
             field_list=[],
-            stock_list=[stock_code],  # 合约代码列表
-            period='5m',  # 数据周期——1m、5m、1d、tick
-            start_time=start_date,  # 数据起始时间%Y%m%d或%Y%m%d%H%M%S
-            end_time=end_date,  # 数据结束时间%Y%m%d或%Y%m%d%H%M%S
-            count=-1,  # 数据个数
-            dividend_type='none',  # 除权方式
-            fill_data=True,  # 是否填充数据
+            stock_list=[stock_code],  # Contract code list
+            period='5m',  # Data frequency - 1m, 5m, 1d, tick
+            start_time=start_date,  # Start timestamp %Y%m%d or %Y%m%d%H%M%S
+            end_time=end_date,  # End timestamp %Y%m%d or %Y%m%d%H%M%S
+            count=-1,  # Data count limit
+            dividend_type='none',  # Adjustment type
+            fill_data=True,  # Whether to fill missing data
         )
         data_to_insert = []
         for index, row in msgs[stock_code].iterrows():
-            # 组装每行数据为一个元组，并添加到待插入数据列表中
+            # Pack each row into a tuple and append to the insertion buffer
             data = (
                 stock_code,
                 index[:-2],
@@ -66,16 +66,16 @@ def worker(stock_code_queue, batch_size, db):
                 row['suspendFlag']
             )
             data_to_insert.append(data)
-            # 检查待插入数据列表的大小，如果达到批量大小，则执行插入
+            # If the buffer exceeds the batch size, execute batch insertion
             if len(data_to_insert) >= batch_size:
                 market_data.batch_insert_market_data(db, data_to_insert)
-                # 清空待插入数据列表，为下一批数据做准备
+                # Clear the buffer for the next batch
                 data_to_insert = []
 
-            # 检查是否有剩余不足批量大小的数据需要插入
+            # Insert any remaining records that are smaller than batch_size
         if data_to_insert:
             market_data.batch_insert_market_data(db, data_to_insert)
-        # 标记任务完成
+        # Mark task as done
         pbar.update(1)
         stock_code_queue.task_done()
 
@@ -176,7 +176,7 @@ def get_code_lists():
 
 def run(db):
 
-    need_download = 0  # 取数据是空值时，将need_download赋值为1，确保正确下载了历史数据
+    need_download = 0  # Set to 1 if local database has null data, ensuring historical downloads are performed.
 
     code_list = get_code_lists()
     code_lists = []
@@ -187,21 +187,21 @@ def run(db):
         code_lists.append(utils.enhance_stock_code(code))
         stock_code_queue.put(utils.enhance_stock_code(code))
 
-    if need_download:  # 判断要不要下载数据, gmd系列函数都是从本地读取历史数据,从服务器订阅获取最新数据
+    if need_download:  # Determine if download is required. Note: gmd series functions read local history; live subscriptions query the server.
         my_download(code_lists, period, start_date, end_date)
 
     batch_size = 500
-    # 创建一个线程池，最大线程数为10
+    # Initialize thread pool with max 20 workers
     with ThreadPoolExecutor(max_workers=20) as executor:
-        # 为每个线程提交一个任务
+        # Submit task for each thread worker
         futures = []
         for _ in range(100):
-            # 提交任务到线程池
+            # Submit worker task to the execution pool
             future = executor.submit(worker, stock_code_queue, batch_size, db)
             futures.append(future)
 
-        # 等待所有线程完成
+        # Wait for all futures to resolve
         for future in futures:
             future.result()
     pbar.close()
-    exit('结束')
+    exit('Download Complete')
