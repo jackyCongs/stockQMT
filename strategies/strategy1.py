@@ -21,7 +21,7 @@ rest_index_push_count = 0
 class Strategy1:
     def __init__(self, db, trader_service, platform, cookie, realtime_iopv_infos):
         # 预留的钱雷打不动，用来提出
-        self.frozen_money = 30000
+        self.frozen_money = 0
         # 等待被初始化的全局场内基金
         self.inner_stock_infos = {}
         # 等待被初始化的全局指数
