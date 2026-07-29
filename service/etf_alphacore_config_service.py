@@ -4,6 +4,8 @@ import os
 import sys
 import datetime
 import threading
+from itertools import count
+
 import pandas as pd
 from xtquant import xtdata
 import time
@@ -460,6 +462,19 @@ class ETFAlphaCoreConfigService:
                     else:
                         if utils.is_normal_a_share(raw_code):
                             all_required_stocks.add(utils.enhance_stock_code(raw_code))
+        if getattr(self, 'pcf_fetch_failures', None):
+            YELLOW = "\033[1;33m"
+            RED = "\033[1;31m"
+            RESET = "\033[0m"
+            BOLD = "\033[1m"
+            print("\n" + RED + "🚨" * 35 + RESET)
+            print(
+                RED + "🚨" + " " * 10 + BOLD + "【 WARNING: FAILED TO FETCH SOME PCF DATA 】" + " " * 10 + "🚨" + RESET)
+            print(RED + "🚨" * 35 + RESET)
+            for fund, reason in self.pcf_fetch_failures:
+                print(YELLOW + f"  👉 Fund [{fund}]: {reason}" + RESET)
+            print(RED + "🚨" * 35 + "\n" + RESET)
+            exit("need to check what the wrong is....")
 
         if all_required_stocks:
             qmt_yesterday = self.yesterday_date.replace('-', '')
@@ -513,15 +528,3 @@ class ETFAlphaCoreConfigService:
                     for i in range(0, len(nas), 10):
                         print(CYAN + f"       {', '.join(nas[i:i+10])}" + RESET)
             print(YELLOW + "======================================================================\n" + RESET)
-
-        if getattr(self, 'pcf_fetch_failures', None):
-            YELLOW = "\033[1;33m"
-            RED = "\033[1;31m"
-            RESET = "\033[0m"
-            BOLD = "\033[1m"
-            print("\n" + RED + "🚨" * 35 + RESET)
-            print(RED + "🚨" + " " * 10 + BOLD + "【 WARNING: FAILED TO FETCH SOME PCF DATA 】" + " " * 10 + "🚨" + RESET)
-            print(RED + "🚨" * 35 + RESET)
-            for fund, reason in self.pcf_fetch_failures:
-                print(YELLOW + f"  👉 Fund [{fund}]: {reason}" + RESET)
-            print(RED + "🚨" * 35 + "\n" + RESET)
