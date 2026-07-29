@@ -21,6 +21,8 @@ class PcfProvider(ABC):
         self.pcf_fetch_failures = pcf_fetch_failures if pcf_fetch_failures is not None else []
         # Project root directory path calculation
         self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.max_retries = 5
+        self.retry_delay = 2
 
     # ─── Public Utility Methods ───────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import datetime
 import random
 import requests
 import pandas as pd
+import time
 
 from .pcf_provider import PcfProvider
 
@@ -131,9 +132,10 @@ class SzsePcfProvider(PcfProvider):
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            for i in range(5):
-                date_str = (now - datetime.timedelta(days=i)).strftime("%Y%m%d")
-                url = f"https://reportdocs.static.szse.cn/files/text/etf/ETF{fund_code}{date_str}.txt?random={random.random()}"
+            date_str = now.strftime("%Y%m%d")
+            url = f"https://reportdocs.static.szse.cn/files/text/etf/ETF{fund_code}{date_str}.txt?random={random.random()}"
+
+            for attempt in range(self.max_retries):
                 try:
                     resp = requests.get(url, headers=headers, timeout=10)
                     if resp.status_code == 200:
@@ -148,10 +150,24 @@ class SzsePcfProvider(PcfProvider):
                             with open(cache_file, "w", encoding="utf-8") as f:
                                 f.write(content)
                         except Exception as e:
-                            print(f"  ❌ Failed to write to local cache: {e}")
+                            print(f"❌ Failed to write to local cache: {e}")
                         break
-                except Exception:
-                    continue
+
+                    elif resp.status_code in [403, 404]:
+                        # File doesn't exist or access is forbidden, no point in retrying
+                        print(f"⚠️ [Client Error {resp.status_code}] File not found or access denied for {date_str}. Stopping retries.")
+                        break
+                    else:
+                        # Server errors (500, 502, etc.) might be temporary, so we retry
+                        print(f"⚠️ [HTTP {resp.status_code}] Unexpected status on attempt {attempt + 1}. Retrying in {self.retry_delay}s...")
+                        time.sleep(self.retry_delay)
+                except requests.exceptions.RequestException as e:
+                    # Catch all network-level exceptions (timeout, connection reset, etc.)
+                    print(f"❌ [Network Error] Attempt {attempt + 1} failed: {e}. Retrying in {self.retry_delay}s...")
+                    time.sleep(self.retry_delay)
+            else:
+                # This block executes ONLY if the loop finishes all iterations without hitting a 'break'
+                print(f"🚨 Failed to download PCF data for {fund_code} after {self.max_retries} attempts.")
 
         if not content:
             print(f"Failed to retrieve SZSE ETF {fund_code} PCF data")

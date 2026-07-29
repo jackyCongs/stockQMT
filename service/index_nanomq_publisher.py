@@ -140,11 +140,11 @@ class IndexMqGateway:
 
     def on_whole_tick_callback(self, datas):
         try:
-            self.watchdog.feed("publisher_qmt_tick")
             batch_payload = []
             for stock_code, tick_data in datas.items():
                 if not tick_data:
                     continue
+                self.watchdog.feed(f"publisher_bse_tick_{stock_code}")
 
                 price = tick_data.get("lastPrice", 0)
                 if price <= 0:
@@ -252,7 +252,9 @@ class IndexMqGateway:
         # ① 1. Subscribe to BSE TQ quotes
         if self.bse_subscribe_list:
             self._start_bse_subscription()
-            self.watchdog.register("publisher_bse_tick", 30, "QuoteGateway-BSE TQ feed")
+            for stock_code in self.bse_subscribe_list:
+                self.watchdog.register(f"publisher_bse_tick_{stock_code}", 30, f"行情网关-北交所TQ-{stock_code}")
+
 
         # ② 2. Other equities utilize QMT full quote push
         if self.subscribe_list:
