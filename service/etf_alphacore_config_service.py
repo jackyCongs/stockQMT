@@ -4,7 +4,6 @@ import os
 import sys
 import datetime
 import threading
-from itertools import count
 
 import pandas as pd
 from xtquant import xtdata
@@ -474,7 +473,7 @@ class ETFAlphaCoreConfigService:
             for fund, reason in self.pcf_fetch_failures:
                 print(YELLOW + f"  👉 Fund [{fund}]: {reason}" + RESET)
             print(RED + "🚨" * 35 + "\n" + RESET)
-            exit("need to check what the wrong is....")
+            exit("PCF fetch failures detected. Aborting to prevent running with stale data.")
 
         if all_required_stocks:
             qmt_yesterday = self.yesterday_date.replace('-', '')
