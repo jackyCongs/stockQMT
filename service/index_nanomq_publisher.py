@@ -222,7 +222,8 @@ class IndexMqGateway:
             if batch_payload:
                 now = datetime.now()
                 if now.hour == 9 and 25 <= now.minute <= 29:
-                    logger.info(f"NMQ payload at {now.strftime('%H:%M:%S')}: {json.dumps(batch_payload, ensure_ascii=False)}")
+                    pass
+                    # logger.info(f"NMQ payload at {now.strftime('%H:%M:%S')}: {json.dumps(batch_payload, ensure_ascii=False)}")
                 self.mq_client.publish(
                     topic="alphacore/tick/batch",
                     payload=json.dumps(batch_payload),
