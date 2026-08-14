@@ -140,11 +140,11 @@ class IndexMqGateway:
 
     def on_whole_tick_callback(self, datas):
         try:
+            self.watchdog.feed("publisher_qmt_tick")
             batch_payload = []
             for stock_code, tick_data in datas.items():
                 if not tick_data:
                     continue
-                self.watchdog.feed(f"publisher_bse_tick_{stock_code}")
 
                 price = tick_data.get("lastPrice", 0)
                 if price <= 0:
@@ -183,7 +183,6 @@ class IndexMqGateway:
     def _on_bse_hq_callback(self, data_str):
         """TDX TQ quote update callback - fetch snapshot and forward to MQ upon push message"""
         try:
-            self.watchdog.feed("publisher_bse_tick")
             code_info = json.loads(data_str)
             stock_code = code_info.get('Code', '')
             if not stock_code:
@@ -195,6 +194,7 @@ class IndexMqGateway:
             snapshot = _tq.get_market_snapshot(stock_code=stock_code, field_list=[])
             if not snapshot:
                 return
+            self.watchdog.feed(f"publisher_bse_tick_{stock_code}")
 
             price = float(snapshot.get("Now", 0))
             if price <= 0:
@@ -222,7 +222,8 @@ class IndexMqGateway:
             if batch_payload:
                 now = datetime.now()
                 if now.hour == 9 and 25 <= now.minute <= 29:
-                    logger.info(f"NMQ payload at {now.strftime('%H:%M:%S')}: {json.dumps(batch_payload, ensure_ascii=False)}")
+                    pass
+                    # logger.info(f"NMQ payload at {now.strftime('%H:%M:%S')}: {json.dumps(batch_payload, ensure_ascii=False)}")
                 self.mq_client.publish(
                     topic="alphacore/tick/batch",
                     payload=json.dumps(batch_payload),
