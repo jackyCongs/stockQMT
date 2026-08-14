@@ -4,7 +4,6 @@ import os
 import sys
 import datetime
 import threading
-import logging
 
 import pandas as pd
 from xtquant import xtdata
@@ -15,11 +14,6 @@ from helper import utils
 from service.pcf.pcf_provider import PcfProvider
 from service.pcf.sse_pcf_provider import SsePcfProvider
 from service.pcf.szse_pcf_provider import SzsePcfProvider
-
-# Configure logger
-logger = logging.getLogger(__name__)
-log = logger
-
 # Force stdout/stderr to use UTF-8 to prevent encoding errors when printing to Windows terminal
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -505,10 +499,10 @@ class ETFAlphaCoreConfigService:
             os.makedirs(os.path.dirname(self.default_config_path), exist_ok=True)
             with open(self.default_config_path, "w", encoding="utf-8") as f:
                 json.dump(all_configs, f, ensure_ascii=False, indent=2)
-            log.info(f"Successfully batch-written configuration for {len(all_configs)} ETFs to: {self.default_config_path}")
+            print(f"Successfully batch-written configuration for {len(all_configs)} ETFs to: {self.default_config_path}")
             print(f"  ✅ Configuration saved successfully: {self.default_config_path} (Total: {len(all_configs)} funds)")
         except Exception as e:
-            log.error(f"Failed to write configuration file {self.default_config_path}: {e}")
+            print(f"Failed to write configuration file {self.default_config_path}: {e}")
             print(f"  ❌ Failed to write configuration file: {e}")
                 
         # Perform a final strict validation
