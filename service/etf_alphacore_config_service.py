@@ -4,6 +4,7 @@ import os
 import sys
 import datetime
 import threading
+import logging
 
 import pandas as pd
 from xtquant import xtdata
@@ -14,6 +15,10 @@ from helper import utils
 from service.pcf.pcf_provider import PcfProvider
 from service.pcf.sse_pcf_provider import SsePcfProvider
 from service.pcf.szse_pcf_provider import SzsePcfProvider
+
+# Configure logger
+logger = logging.getLogger(__name__)
+log = logger
 
 # Force stdout/stderr to use UTF-8 to prevent encoding errors when printing to Windows terminal
 if hasattr(sys.stdout, 'reconfigure'):
@@ -146,7 +151,7 @@ class ETFAlphaCoreConfigService:
 
         if comp_df is None or comp_df.empty:
             print("  ❌ Failed to retrieve PCF components. Aborting.")
-            return
+            return {"skipped": True, "reason": "Failed to retrieve PCF components"}
 
         # Filter physical shares: exclude SUBSTITUTION_FLAG="2" (must substitute with cash)
         physical_df = comp_df[comp_df["SUBSTITUTION_FLAG"] != "2"].copy()
@@ -306,9 +311,8 @@ class ETFAlphaCoreConfigService:
         else:
             print(" ❌️ ⚠ Failed to retrieve index previous close. Defaulting to 0.0 placeholder.")
 
-        # ---- 4. 写入配置文件 ----
-        print("\n[4/4] Saving configuration...")
-        config_path = self.default_config_path
+        # ---- 4. 组装配置项 ----
+        print("\n[4/4] Assembling configuration...")
 
         estimated_cash = PcfProvider.clean_float(info.get("ESTIMATED_CASH_COMPONENT", 0.0)) if info else 0.0
         net_asset_value = PcfProvider.clean_float(info.get("NAV", 0.0)) if info else 0.0
@@ -320,33 +324,18 @@ class ETFAlphaCoreConfigService:
         # Current date string
         today_str = datetime.datetime.now().strftime("%Y%m%d")
 
-        # Load, append, and overwrite configuration file
-        config_data = {}
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-            except Exception:
-                pass
-
-        config_data[fund_code] = {
+        config_item = {
             "index_code": index_code,
             "index_pre_close": index_pre_close,
             "basket_pre_close": basket_pre_close,
             "estimated_cash": estimated_cash,
             "net_asset_value": net_asset_value,
             "origin_basket_amount": origin_basket_amount,
-            "hidden_substitute_amount": round(origin_basket_amount-estimated_cash-basket_pre_close, 5),
+            "hidden_substitute_amount": round(origin_basket_amount - estimated_cash - basket_pre_close, 5),
             "update_date": today_str,
             "components": components,
         }
 
-        # Ensure directory structure exists
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, ensure_ascii=False, indent=2)
-
-        print(f"  Configuration saved to: {config_path}")
         print(f"\n  --- Config Summary ---")
         print(f"  index_code:           {index_code}")
         print(f"  index_pre_close:      {index_pre_close}")
@@ -354,7 +343,7 @@ class ETFAlphaCoreConfigService:
         print(f"  estimated_cash:       {estimated_cash}")
         print(f"  net_asset_value:      {net_asset_value}")
         print(f"  origin_basket_amount: {origin_basket_amount}")
-        print(f"  hidden_substitute_amount:{origin_basket_amount-estimated_cash-basket_pre_close}")
+        print(f"  hidden_substitute_amount:{origin_basket_amount - estimated_cash - basket_pre_close}")
         print(f"  update_date:          {today_str}")
         print(f"  components:           {len(components)} physical stocks")
 
@@ -362,7 +351,7 @@ class ETFAlphaCoreConfigService:
         print("  Completed")
         print("=" * 70)
         
-        return {"skipped": False}
+        return {"skipped": False, "config": config_item}
 
     def verify_config(self):
         print("\n" + "=" * 70)
@@ -490,20 +479,37 @@ class ETFAlphaCoreConfigService:
         print("\n" + "=" * 70)
         print(f"  Generating ETF configuration files (Total: {len(fund_codes)} funds)...")
         print("=" * 70)
-        
+
         skipped_hk_etfs = {}
         skipped_non_a_etfs = {}
+        all_configs = {}
         total_funds = len(fund_codes)
         for i, fund_code in enumerate(fund_codes):
             try:
                 res = self.generate_config(fund_code, current_idx=i+1, total_count=total_funds)
-                if res and res.get("skipped"):
+                if res.get("skipped"):
                     if res.get("hk_stocks"):
                         skipped_hk_etfs[fund_code] = res.get("hk_stocks", [])
                     if res.get("non_a_shares"):
                         skipped_non_a_etfs[fund_code] = res.get("non_a_shares", [])
+                else:
+                    all_configs[fund_code] = res["config"]
             except Exception as e:
                 print(f"  ❌ Error generating ETF {fund_code} configuration: {e}")
+
+        # Batch write all generated ETF configurations to disk in a single write operation (optimizing SSD life & I/O)
+        print("\n" + "=" * 70)
+        print(f"  Saving all configurations ({len(all_configs)} ETFs) to disk in a single batch...")
+        print("=" * 70)
+        try:
+            os.makedirs(os.path.dirname(self.default_config_path), exist_ok=True)
+            with open(self.default_config_path, "w", encoding="utf-8") as f:
+                json.dump(all_configs, f, ensure_ascii=False, indent=2)
+            log.info(f"Successfully batch-written configuration for {len(all_configs)} ETFs to: {self.default_config_path}")
+            print(f"  ✅ Configuration saved successfully: {self.default_config_path} (Total: {len(all_configs)} funds)")
+        except Exception as e:
+            log.error(f"Failed to write configuration file {self.default_config_path}: {e}")
+            print(f"  ❌ Failed to write configuration file: {e}")
                 
         # Perform a final strict validation
         self.verify_config()
