@@ -5,7 +5,7 @@ from helper.time_utils import get_datetime
 from db import stock as stock_db, index_daily_history
 from datetime import datetime, timedelta
 from decimal import Decimal
-from helper import spider, utils, date_utils
+from helper import spider, utils, date_utils, notifier
 import logging
 from tqdm import tqdm
 from xtquant import xtdata
@@ -45,14 +45,14 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
                 net_worth = spider.get_last_net_worth(stock['code'])
                 if net_worth['code'] != 200:
                     logger.error(f"{stock['code']}, Failed to fetch fund net worth details: {net_worth['msg']}")
+                    notifier.send_telegram_alert("Alert", f"{stock['code']}, Failed to fetch fund net worth details: {net_worth['msg']}")
                     continue
                 # Cache/store the net worth
                 stock_db.update_stock_net_worth(db_instance, json.dumps(net_worth), net_worth['net_worth_date'], stock['id'])
 
             if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d"):
-                logger.warning(f"[{stock['code']}] Dividend distribution today: ex-dividend is {net_worth['bonus_money']} CNY per share.")
-                if inner_etf_type == 'lof':
-                    net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
+                logger.info(f"[{stock['code']}] Dividend distribution today: ex-dividend is {net_worth['bonus_money']} CNY per share.")
+                net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
             # If the enhanced stock code remains unchanged, it is invalid; skip it
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue

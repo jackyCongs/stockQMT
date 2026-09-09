@@ -7,7 +7,7 @@ import re
 from decimal import Decimal, ROUND_HALF_UP
 import random
 import json
-from helper import utils
+from helper import utils, notifier
 import time
 from requests.exceptions import RequestException
 
@@ -26,17 +26,24 @@ def get_last_net_worth(stock_code):
         soup = BeautifulSoup(response.text, 'html.parser')
 
         bonus_date = None
-        bonus_money = float('0')
-
-        # Parse dividend payout data
-        if soup.find('li', {'class': 'position_bonus'}):
-            if soup.find('li', {'class': 'position_bonus'}).find("table", {'class': 'ui-table-hover'}):
-                if soup.find('li', {'class': 'position_bonus'}).find("table", {'class': 'ui-table-hover'}).find('tr'):
-                    bonus_arr = soup.find('li', {'class': 'position_bonus'}).find("table", {'class': 'ui-table-hover'}).find('tr').find_all('td')
-                    match = re.search(r'\d+\.?\d*', bonus_arr[1].text)
-                    if match:
-                        bonus_date = bonus_arr[0].text
-                        bonus_money = float(match.group())
+        bonus_money = 0.0
+        bonus_tr = soup.select_one('li.position_bonus table.ui-table-hover tr')
+        if bonus_tr:
+            bonus_arr = bonus_tr.find_all('td')
+            if len(bonus_arr) >= 2:
+                raw_text = bonus_arr[1].text.strip()
+                pattern = r'每\s*(\d+)\s*份派现金\s*(\d+\.?\d*)'
+                match = re.search(pattern, raw_text)
+                if match:
+                    bonus_date = bonus_arr[0].text.strip()
+                    base_shares = float(match.group(1))
+                    cash_payout = float(match.group(2))
+                    if base_shares > 0:
+                        bonus_money = round(cash_payout / base_shares, 6)
+                else:
+                    logger.error(f"[Error] Fund {stock_code}: Failed to match dividend payout text, unknown format: '{raw_text}'")
+                    # notifier.send_telegram_alert("Alert", f"[Error] Fund {stock_code}: Failed to match dividend payout text, unknown format: '{raw_text}'")
+                    return {'code': 400, 'msg': f"[Error] Fund {stock_code}: Failed to match dividend payout text, unknown format: '{raw_text}'"}
 
         # Parse unit net worth
         dl_blocks = soup.find('div', {'class': 'dataOfFund'}).find_all('dl', class_=re.compile(r'^dataItem0'))
@@ -65,6 +72,7 @@ def get_last_net_worth(stock_code):
                 'bonus_money': bonus_money}
     except Exception as e:
         logging.error(f"Error parsing net worth for {stock_code}: {e}")
+        return {'code': 400, 'msg': f"Error parsing net worth for {stock_code}: {e}"}
 
 def get_target_index(code):
     url = f"https://fund.eastmoney.com/{str(code)}.html"

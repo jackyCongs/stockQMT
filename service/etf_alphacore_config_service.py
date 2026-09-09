@@ -425,15 +425,55 @@ class ETFAlphaCoreConfigService:
         all_required_stocks = set()
         self._pcf_info_cache = {}
         self._pcf_comp_cache = {}
-        
-        total_funds = len(fund_codes)
-        for i, fund_code in enumerate(fund_codes):
-            print(f"  ⏳ [{i+1}/{total_funds}] Retrieving and parsing PCF list for ETF {fund_code}...")
-            info = self.get_pcf_basic_info(fund_code)
-            comp_df = self.get_pcf_components(fund_code)
-            self._pcf_info_cache[fund_code] = info
-            self._pcf_comp_cache[fund_code] = comp_df
-            
+        pending_funds = list(fund_codes)
+        max_pcf_retries = 5
+
+        for attempt in range(1, max_pcf_retries + 1):
+            self.pcf_fetch_failures = []
+            self._sse_provider.pcf_fetch_failures = self.pcf_fetch_failures
+            self._szse_provider.pcf_fetch_failures = self.pcf_fetch_failures
+
+            total_pending = len(pending_funds)
+            if attempt > 1:
+                print(f"\n  🔁 [Retry {attempt}/{max_pcf_retries}] Retrying PCF fetch for {total_pending} failed ETF(s)...")
+
+            for i, fund_code in enumerate(pending_funds):
+                progress_str = f"[{i+1}/{total_pending}]" if attempt > 1 else f"[{i+1}/{len(fund_codes)}]"
+                print(f"  ⏳ {progress_str} Retrieving and parsing PCF list for ETF {fund_code}...")
+                info = self.get_pcf_basic_info(fund_code)
+                comp_df = self.get_pcf_components(fund_code)
+                self._pcf_info_cache[fund_code] = info
+                self._pcf_comp_cache[fund_code] = comp_df
+
+            if not self.pcf_fetch_failures:
+                if attempt > 1:
+                    print(f"  ✅ All PCF data successfully retrieved after {attempt} attempts!")
+                break
+
+            # Update pending_funds with only the funds that failed
+            failed_fund_codes = [fund for fund, _ in self.pcf_fetch_failures]
+            pending_funds = list(dict.fromkeys(failed_fund_codes))
+
+            if attempt < max_pcf_retries:
+                print(f"  ⚠️ Attempt {attempt}/{max_pcf_retries} encountered {len(pending_funds)} PCF fetch failure(s). Retrying in 3 seconds...")
+                time.sleep(3.0)
+
+        if getattr(self, 'pcf_fetch_failures', None):
+            YELLOW = "\033[1;33m"
+            RED = "\033[1;31m"
+            RESET = "\033[0m"
+            BOLD = "\033[1m"
+            print("\n" + RED + "🚨" * 35 + RESET)
+            print(
+                RED + "🚨" + " " * 10 + BOLD + f"【 WARNING: FAILED TO FETCH SOME PCF DATA AFTER {max_pcf_retries} RETRIES 】" + " " * 10 + "🚨" + RESET)
+            print(RED + "🚨" * 35 + RESET)
+            for fund, reason in self.pcf_fetch_failures:
+                print(YELLOW + f"  👉 Fund [{fund}]: {reason}" + RESET)
+            print(RED + "🚨" * 35 + "\n" + RESET)
+            exit(f"PCF fetch failures detected after {max_pcf_retries} retries. Aborting to prevent running with stale data.")
+
+        for fund_code in fund_codes:
+            comp_df = self._pcf_comp_cache.get(fund_code)
             if comp_df is not None and not comp_df.empty:
                 physical_df = comp_df[comp_df["SUBSTITUTION_FLAG"] != "2"]
                 for _, row in physical_df.iterrows():
@@ -444,19 +484,6 @@ class ETFAlphaCoreConfigService:
                     else:
                         if utils.is_normal_a_share(raw_code):
                             all_required_stocks.add(utils.enhance_stock_code(raw_code))
-        if getattr(self, 'pcf_fetch_failures', None):
-            YELLOW = "\033[1;33m"
-            RED = "\033[1;31m"
-            RESET = "\033[0m"
-            BOLD = "\033[1m"
-            print("\n" + RED + "🚨" * 35 + RESET)
-            print(
-                RED + "🚨" + " " * 10 + BOLD + "【 WARNING: FAILED TO FETCH SOME PCF DATA 】" + " " * 10 + "🚨" + RESET)
-            print(RED + "🚨" * 35 + RESET)
-            for fund, reason in self.pcf_fetch_failures:
-                print(YELLOW + f"  👉 Fund [{fund}]: {reason}" + RESET)
-            print(RED + "🚨" * 35 + "\n" + RESET)
-            exit("PCF fetch failures detected. Aborting to prevent running with stale data.")
 
         if all_required_stocks:
             qmt_yesterday = self.yesterday_date.replace('-', '')
