@@ -11,6 +11,8 @@ from helper import utils, notifier
 import time
 from requests.exceptions import RequestException
 
+from helper.time_utils import get_datetime
+
 logger = logging.getLogger(__name__)
 
 class StopStreamException(Exception):
@@ -30,7 +32,8 @@ def get_last_net_worth(stock_code):
         bonus_tr = soup.select_one('li.position_bonus table.ui-table-hover tr')
         if bonus_tr:
             bonus_arr = bonus_tr.find_all('td')
-            if len(bonus_arr) >= 2:
+            bonus_date = bonus_arr[0].text.strip()
+            if len(bonus_arr) >= 2 and bonus_date == get_datetime().strftime("%Y-%m-%d"):
                 raw_text = bonus_arr[1].text.strip()
                 pattern = r'每\s*(\d+)\s*份派现金\s*(\d+\.?\d*)'
                 match = re.search(pattern, raw_text)
