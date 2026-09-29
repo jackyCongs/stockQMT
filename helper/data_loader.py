@@ -13,8 +13,22 @@ import json
 
 logger = logging.getLogger(__name__)
 
+import json
+from decimal import Decimal
+from tqdm import tqdm
 
-def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
+import json
+from decimal import Decimal
+from tqdm import tqdm
+
+
+def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type, confirm=True, max_retries=5, current_retry=0):
+    # 1. Safety mechanism: Terminate recursion if the maximum number of retries is exceeded
+    if current_retry > max_retries:
+        logger.error(
+            f"Maximum retries ({max_retries}) reached. Some stock net worth data was not successfully updated. Exiting current task.")
+        exit(0)
+
     stocks = stock_db.get_stock_list(db_instance, inner_etf_type)
     trading_dates = xtdata.get_trading_dates("SZ", date_utils.get_past_date_str(15), get_datetime().strftime("%Y%m%d"))
     is_today_trading = date_utils.is_today_trading()
@@ -22,19 +36,26 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
         worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 2])
     else:
         worth_date = date_utils.transfer_date(trading_dates[len(trading_dates) - 1])
-    print(f"Previous trading & net worth date: {worth_date}. Is today a trading day? {is_today_trading}. Enter 'yes' to continue or 'no' to exit: ")
-    while True:
-        user_input = input().strip().lower()
-        if user_input == 'yes':
-            print("User confirmed. Continuing execution...")
-            break
-        elif user_input == 'no':
-            print("User cancelled. Exiting program...")
-            exit(0)
-        else:
-            print("Invalid input. Please enter 'yes' or 'no':")
 
-    pbar = tqdm(total=len(stocks), desc="inner_stock loading...", mininterval=1)
+    # 2. Modification: Block and wait for user input only when confirmation is required (usually the initial run)
+    if confirm:
+        print(
+            f"Previous trading & net worth date: {worth_date}. Is today a trading day? {is_today_trading}. Enter 'yes' to continue or 'no' to exit: ")
+        while True:
+            user_input = input().strip().lower()
+            if user_input == 'yes':
+                print("User confirmed. Continuing execution...")
+                break
+            elif user_input == 'no':
+                print("User cancelled. Exiting program...")
+                exit(0)
+            else:
+                print("Invalid input. Please enter 'yes' or 'no':")
+
+    # Update progress bar description to reflect the current retry attempt
+    desc_text = f"inner_stock loading (Try {current_retry + 1})..." if current_retry > 0 else "inner_stock loading..."
+    pbar = tqdm(total=len(stocks), desc=desc_text, mininterval=1)
+
     for stock in stocks:
         try:
             net_worth = None
@@ -53,6 +74,8 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
             if net_worth['bonus_date'] is not None and net_worth['bonus_date'] == get_datetime().strftime("%Y-%m-%d"):
                 logger.info(f"[{stock['code']}] Dividend distribution today: ex-dividend is {net_worth['bonus_money']} CNY per share.")
                 net_worth['net_worth'] = float(net_worth['net_worth']) - float(net_worth['bonus_money'])
+                if inner_etf_type == 'lof':
+                    notifier.send_telegram_alert("Alert", "there is lof fund divided today, please verify......")
             # If the enhanced stock code remains unchanged, it is invalid; skip it
             if utils.enhance_stock_code(stock['code']) == stock['code']:
                 continue
@@ -81,6 +104,58 @@ def load_inner_stock(db_instance, inner_stock_infos, inner_etf_type):
     # Close progress bar upon completion
     pbar.close()
 
+    # ================= Self-check Logic =================
+    is_fully_updated, failed_stocks = verify_net_worth_updates(db_instance, inner_etf_type, worth_date)
+    if not is_fully_updated:
+        logger.warning(f"Self-check found {len(failed_stocks)} stocks that failed to update: {failed_stocks[:5]}... Preparing to retry. ❌️❌️❌️❌️❌️")
+        load_inner_stock(
+            db_instance,
+            inner_stock_infos,
+            inner_etf_type,
+            confirm=False,
+            max_retries=max_retries,
+            current_retry=current_retry + 1
+        )
+    else:
+        if current_retry > 0:
+            logger.info("Retry self-check passed: All stock net worth data has been fully updated. 👍👍👍👍👍👍")
+        else:
+            logger.info("Initial self-check passed: All stock net worth data has been fully updated. 👍👍👍👍👍👍")
+
+def verify_net_worth_updates(db, inner_etf_type, target_date):
+    verify_stocks = stock_db.get_stock_list(db, inner_etf_type)
+    failed_stocks = []
+
+    for stock in verify_stocks:
+        nw = None
+        if stock['net_worth']:
+            try:
+                nw = json.loads(stock['net_worth'])
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON for stock {stock['code']}: {e}")
+        # Verification: If the data is still None, or the date doesn't match the target date, it was missed
+        if nw is None or nw.get('net_worth_date') != target_date:
+            failed_stocks.append(stock['code'])
+    return len(failed_stocks) == 0, failed_stocks
+
+def get_dividend_stocks(db_instance, inner_etf_type, target_date):
+    stocks = stock_db.get_stock_list(db_instance, inner_etf_type)
+    dividend_dict = {}
+    for stock in stocks:
+        try:
+            if not stock.get('net_worth'):
+                continue
+            net_worth = json.loads(stock['net_worth'])
+            bonus_date = net_worth.get('bonus_date')
+            bonus_money = net_worth.get('bonus_money')
+            if bonus_date is not None and bonus_date == target_date and bonus_money is not None:
+                stock_code = stock['code']
+                dividend_dict[stock_code] = {
+                    'bonus_money': float(bonus_money)
+                }
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error(f"Failed to process dividend data for stock {stock.get('code', 'UNKNOWN')}: {e}")
+    return dividend_dict
 
 # Refresh holding records
 def fresh_holding(inner_stock_infos, target_index_infos, holding):

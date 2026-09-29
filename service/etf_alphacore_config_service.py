@@ -10,7 +10,8 @@ from xtquant import xtdata
 import time
 from db import index_daily_history
 from db import stock as stock_db
-from helper import utils
+from helper import utils, data_loader
+from helper.time_utils import get_datetime
 from service.pcf.pcf_provider import PcfProvider
 from service.pcf.sse_pcf_provider import SsePcfProvider
 from service.pcf.szse_pcf_provider import SzsePcfProvider
@@ -47,10 +48,12 @@ class ETFAlphaCoreConfigService:
         self._pcf_comp_cache = {}
         self.pcf_fetch_failures = []
         self.db = db
+        self.etf_type = 'etf'
         # PCF data providers (sharing pcf_fetch_failures list)
         self._sse_provider = SsePcfProvider(pcf_fetch_failures=self.pcf_fetch_failures)
         self._szse_provider = SzsePcfProvider(pcf_fetch_failures=self.pcf_fetch_failures)
         self.yesterday_date = yesterday_date
+        self.today_date = get_datetime().strftime("%Y-%m-%d")
         
         # Default config file path
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -122,7 +125,7 @@ class ETFAlphaCoreConfigService:
         """Retrieve ETF PCF components dataframe (supporting both SSE & SZSE)"""
         return self._get_pcf_provider(fund_code).get_components(fund_code)
 
-    def generate_config(self, fund_code: str, current_idx: int = 0, total_count: int = 0):
+    def generate_config(self, fund_code: str, dividend_stocks, current_idx: int = 0, total_count: int = 0):
         """
         Generate alphacore_config.json configuration from ETF PCF list.
         """
@@ -308,6 +311,10 @@ class ETFAlphaCoreConfigService:
         # ---- 4. 组装配置项 ----
         print("\n[4/4] Assembling configuration...")
 
+        bonus_money = 0
+        if fund_code in dividend_stocks:
+            bonus_money = dividend_stocks[fund_code]["bonus_money"]
+
         estimated_cash = PcfProvider.clean_float(info.get("ESTIMATED_CASH_COMPONENT", 0.0)) if info else 0.0
         net_asset_value = PcfProvider.clean_float(info.get("NAV", 0.0)) if info else 0.0
 
@@ -324,6 +331,7 @@ class ETFAlphaCoreConfigService:
             "basket_pre_close": basket_pre_close,
             "estimated_cash": estimated_cash,
             "net_asset_value": net_asset_value,
+            "bonus_money"   : bonus_money,
             "origin_basket_amount": origin_basket_amount,
             "hidden_substitute_amount": round(origin_basket_amount - estimated_cash - basket_pre_close, 5),
             "update_date": today_str,
@@ -336,6 +344,7 @@ class ETFAlphaCoreConfigService:
         print(f"  basket_pre_close:     {basket_pre_close}")
         print(f"  estimated_cash:       {estimated_cash}")
         print(f"  net_asset_value:      {net_asset_value}")
+        print(f"  bonus_money:          {bonus_money}")
         print(f"  origin_basket_amount: {origin_basket_amount}")
         print(f"  hidden_substitute_amount:{origin_basket_amount - estimated_cash - basket_pre_close}")
         print(f"  update_date:          {today_str}")
@@ -404,9 +413,11 @@ class ETFAlphaCoreConfigService:
         # Sync error list reference for both providers
         self._sse_provider.pcf_fetch_failures = self.pcf_fetch_failures
         self._szse_provider.pcf_fetch_failures = self.pcf_fetch_failures
+
+        threading.Thread(target=data_loader.load_inner_stock, args=(self.db, {}, self.etf_type, False)).start()
         fund_codes = []
 
-        stocks = stock_db.get_stock_list(self.db, 'etf')
+        stocks = stock_db.get_stock_list(self.db, self.etf_type)
         for stock in stocks:
             code = stock['code']
             # Currently only SSE funds (prefix 5) are allowed into the Alphacore pipeline
@@ -484,7 +495,10 @@ class ETFAlphaCoreConfigService:
                     else:
                         if utils.is_normal_a_share(raw_code):
                             all_required_stocks.add(utils.enhance_stock_code(raw_code))
-
+        verify_stock_succeed, failed_stocks = data_loader.verify_net_worth_updates(self.db, self.etf_type, self.yesterday_date)
+        if not verify_stock_succeed:
+            exit(f"  ❌ verify_net_worth_updates failed, failed_stocks number: {len(failed_stocks)}")
+        dividend_stocks = data_loader.get_dividend_stocks(self.db, self.etf_type, self.today_date)
         if all_required_stocks:
             qmt_yesterday = self.yesterday_date.replace('-', '')
             print(f"  ⏬ Extracted {len(all_required_stocks)} unique tickers. Starting batch pre-download for {qmt_yesterday} data...")
@@ -507,7 +521,7 @@ class ETFAlphaCoreConfigService:
         total_funds = len(fund_codes)
         for i, fund_code in enumerate(fund_codes):
             try:
-                res = self.generate_config(fund_code, current_idx=i+1, total_count=total_funds)
+                res = self.generate_config(fund_code, dividend_stocks, current_idx=i+1, total_count=total_funds)
                 if res.get("skipped"):
                     if res.get("hk_stocks"):
                         skipped_hk_etfs[fund_code] = res.get("hk_stocks", [])
