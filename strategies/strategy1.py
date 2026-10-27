@@ -51,6 +51,9 @@ class Strategy1:
         self.watchdog = WatchdogService()
         self.spider_cookie = cookie
         self.realtime_iopv_infos = realtime_iopv_infos
+        self.check_total_count = 0
+        self.check_blocked_count = 0
+        self.check_passed_count = 0
 
     def _get_lock(self, stock_code):
         # Create a new lock for the stock_code if it does not exist
@@ -225,7 +228,9 @@ class Strategy1:
                 logger.warning(f"last_net_worth_date anomaly: {stock_info['last_net_worth_date']} - {self.yesterday}")
                 return None
 
-            if (get_time() - index_info['timestamp'] > 10) or (get_time() - stock_info['timestamp'] > 60*60*8):
+            is_timeout_blocked = (get_time() - index_info['timestamp'] > 10) or (get_time() - stock_info['timestamp'] > 60*60*8)
+            self.record_timeout_stats(is_timeout_blocked)
+            if is_timeout_blocked:
                 self.sell_queue.remove_stock(stock_code)
                 # self.buy_queue.remove_stock(stock_code)
                 # Delays > 10s indicate anomaly; alert required
@@ -370,3 +375,22 @@ class Strategy1:
         # Prior to market close, print actual appraisal every 10 seconds for manual exits
         if utils.is_going_to_close() and utils.should_print("strategy1", 10):
             self.buy_queue.print_queue()
+
+    def record_timeout_stats(self, is_timeout_blocked):
+        self.check_total_count += 1
+        if is_timeout_blocked:
+            self.check_blocked_count += 1
+        else:
+            self.check_passed_count += 1
+
+        if utils.should_print("strategy1_timeout_stats", 600):
+            blocked_ratio = (self.check_blocked_count / self.check_total_count * 100) if self.check_total_count > 0 else 0
+            passed_ratio = (self.check_passed_count / self.check_total_count * 100) if self.check_total_count > 0 else 0
+            logger.info(
+                f"[third-part index 超时校验统计] 总执行到此处: {self.check_total_count}次 | "
+                f"正常通过: {self.check_passed_count}次 ({passed_ratio:.2f}%) | "
+                f"超时被拦: {self.check_blocked_count}次 ({blocked_ratio:.2f}%)"
+            )
+            self.check_total_count = 0
+            self.check_blocked_count = 0
+            self.check_passed_count = 0
