@@ -58,6 +58,9 @@ class ETFAlphaCoreConfigService:
         # Default config file path
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.default_config_path = os.path.join(project_root, "files", "alphacore_config.json")
+        
+        # Funds enabled for Free-Float Benchmark Synthetic Mode (做市商公允合成模式，彻底消除PCF整手四舍五入偏差，如512330直通1.8064)
+        self.benchmark_weighted_funds = {'512330'}
 
     def _ensure_history_data(self, stock_list, period, start_time, end_time, max_retries=5):
         """Synchronous downloader to ensure all stock market data is cached locally"""
@@ -150,12 +153,14 @@ class ETFAlphaCoreConfigService:
             print("  ❌ Failed to retrieve PCF components. Aborting.")
             return {"skipped": True, "reason": "Failed to retrieve PCF components"}
 
-        # Filter physical shares: exclude SUBSTITUTION_FLAG="2" (must substitute with cash)
-        physical_df = comp_df[comp_df["SUBSTITUTION_FLAG"] != "2"].copy()
-        cash_only_df = comp_df[comp_df["SUBSTITUTION_FLAG"] == "2"]
+        # 1. 区分实物成分股与现金替代候选股：
+        # 凡是 PCF 清单中 QUANTITY > 0 的成分股，均为申赎篮子中的真实实物股（无论 SUBSTITUTION_FLAG 是 0, 1 还是 2，均必须全部纳入 components 参与实时撮合）
+        comp_df["QUANTITY_INT"] = pd.to_numeric(comp_df["QUANTITY"], errors='coerce').fillna(0).astype(int)
+        physical_df = comp_df[comp_df["QUANTITY_INT"] > 0].copy()
+        cash_only_df = comp_df[comp_df["QUANTITY_INT"] == 0]
         print(f"  Total PCF components: {len(comp_df)}")
-        print(f"  Physical stocks: {len(physical_df)} (cash substitution = allowed)")
-        print(f"  Cash substitution only: {len(cash_only_df)} (cash substitution = mandatory, excluded)")
+        print(f"  Physical stocks: {len(physical_df)} (QUANTITY > 0, cash substitution = allowed/mandatory)")
+        print(f"  Cash substitution candidates: {len(cash_only_df)} (QUANTITY == 0)")
 
         components = {}
         hk_stocks = []
@@ -183,9 +188,17 @@ class ETFAlphaCoreConfigService:
             quantity = int(row["QUANTITY"])
             components[stock_code] = quantity
 
-        print(f"  Components mapping generated: {len(components)} stocks")
+        # 方案B（影子股票还原）：收集 QUANTITY == 0 的必须现金替代成分股（如 512330 的继峰股份、源杰科技、达梦数据）
+        shadow_candidates = []
+        for _, row in cash_only_df.iterrows():
+            raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
+            market_id = str(row.get("UNDERLYION_SECURITY_ID", "")).strip()
+            if market_id != "103" and utils.is_normal_a_share(raw_code):
+                shadow_candidates.append(utils.enhance_stock_code(raw_code))
+
+        print(f"  Components mapping generated: {len(components)} stocks, {len(shadow_candidates)} shadow candidates")
         
-        if not components:
+        if not components and not shadow_candidates:
             print("  🚫 No valid physical A-share components found for this ETF (likely cash-only substitution or overseas fund). Skipping generation.")
             return {"skipped": True, "reason": "No valid physical A-share components"}
 
@@ -203,7 +216,7 @@ class ETFAlphaCoreConfigService:
         print("\n[2/4] Retrieving previous close prices and calculating basket_pre_close...")
         basket_pre_close = 0.0
         missing_count = 0
-        stock_list = list(components.keys())
+        stock_list = list(set(list(components.keys()) + shadow_candidates))
         market_data = {}
         
         qmt_yesterday = self.yesterday_date.replace('-', '')
@@ -228,7 +241,11 @@ class ETFAlphaCoreConfigService:
         # Attempt to extract Phase 1 close prices
         for stock_code in stock_list:
             last_close = 0.0
-            if stock_code in market_data and not market_data[stock_code].empty:
+            # 优先从交易所合约信息获取官方前收盘价 PreClose（已由交易所完成除权除息 XR / 送配股调整，与盘中撮合基准价格严格一致）
+            detail = xtdata.get_instrument_detail(stock_code)
+            if detail and detail.get('PreClose', 0.0) > 0:
+                last_close = float(detail['PreClose'])
+            elif stock_code in market_data and not market_data[stock_code].empty:
                 try:
                     df_px = market_data[stock_code]
                     if 'close' in df_px.columns:
@@ -325,6 +342,79 @@ class ETFAlphaCoreConfigService:
         # Current date string
         today_str = datetime.datetime.now().strftime("%Y%m%d")
 
+        # 自由流通市值公允合成模式（Benchmark Synthetic Weights，如 512330 直通 1.8064 做市商定价）：
+        if getattr(self, 'benchmark_weighted_funds', None) and fund_code in self.benchmark_weighted_funds:
+            all_constituents = list(set(list(components.keys()) + shadow_candidates))
+            total_ff_cap = 0.0
+            stock_info = {}
+            for s_code in all_constituents:
+                lc = stock_last_close.get(s_code, 0.0)
+                if lc > 0:
+                    detail = xtdata.get_instrument_detail(s_code)
+                    fvol = detail.get('FloatVolume', 0.0) if detail else 0.0
+                    if fvol > 0:
+                        total_ff_cap += fvol * lc
+                        stock_info[s_code] = {'fvol': fvol, 'lc': lc}
+            
+            if total_ff_cap > 0:
+                scale = origin_basket_amount / total_ff_cap
+                synth_components = {}
+                synth_pre_close = 0.0
+                for s_code, info in stock_info.items():
+                    shares = round(info['fvol'] * scale)
+                    if shares > 0:
+                        synth_components[s_code] = shares
+                        synth_pre_close += shares * info['lc']
+                
+                components = synth_components
+                basket_pre_close = round(synth_pre_close, 2)
+                estimated_cash = round(max(0.0, origin_basket_amount - basket_pre_close), 2)
+                raw_hidden = 0.0
+                hidden_substitute_amount = 0.0
+                print(f"  💎 [Benchmark Mode] 成功生成自由流通市值公允合成篮子: {len(components)} 只成分股, 篮子昨收={basket_pre_close}, 预估现金={estimated_cash} (直通 1.8064 做市商公允定价)")
+            else:
+                raw_hidden = 0.0
+                hidden_substitute_amount = 0.0
+        else:
+            # 方案B（影子股票流通市值加权还原 / Cap-Weighted Shadow Basket）：
+            # 对于 QUANTITY == 0 但属于标的成分股的必须现金替代标的，按自由流通市值加权分配 estimated_cash
+            valid_shadow = [s for s in shadow_candidates if stock_last_close.get(s, 0.0) > 0]
+            if valid_shadow and estimated_cash > 0:
+                shadow_caps = {}
+                for s_code in valid_shadow:
+                    lc = stock_last_close[s_code]
+                    detail = xtdata.get_instrument_detail(s_code)
+                    fvol = detail.get('FloatVolume', 0.0) if detail else 0.0
+                    shadow_caps[s_code] = fvol * lc if fvol > 0 else lc
+
+                total_shadow_cap = sum(shadow_caps.values())
+                total_cash_to_alloc = estimated_cash
+                restored_shadow = []
+                for s_code in valid_shadow:
+                    lc = stock_last_close[s_code]
+                    w = shadow_caps[s_code] / total_shadow_cap if total_shadow_cap > 0 else (1.0 / len(valid_shadow))
+                    alloc_cash = total_cash_to_alloc * w
+                    shadow_shares = round(alloc_cash / lc)
+                    if shadow_shares > 0:
+                        components[s_code] = shadow_shares
+                        shadow_val = round(shadow_shares * lc, 2)
+                        basket_pre_close += shadow_val
+                        estimated_cash -= shadow_val
+                        restored_shadow.append(f"{s_code}({shadow_shares}股,权重{w*100:.1f}%)")
+                if estimated_cash < 0:
+                    estimated_cash = 0.0
+                basket_pre_close = round(basket_pre_close, 2)
+                estimated_cash = round(estimated_cash, 2)
+                print(f"  ✨ [Option B 市值加权影子股票还原] 成功还原 {len(restored_shadow)} 只影子成分股: {', '.join(restored_shadow)}")
+
+            raw_hidden = origin_basket_amount - estimated_cash - basket_pre_close
+            # 异常负向现金替代防护：正向 hidden_substitute_amount 为合法的跨市场替代资产（如深市股票），必须保留；
+            # 负向 hidden_substitute_amount 会在实时计算中形成虚假负债拉低净值，因此将负值平抑置零。
+            if raw_hidden < 0:
+                hidden_substitute_amount = 0.0
+            else:
+                hidden_substitute_amount = round(raw_hidden, 5)
+
         config_item = {
             "index_code": index_code,
             "index_pre_close": index_pre_close,
@@ -333,7 +423,7 @@ class ETFAlphaCoreConfigService:
             "net_asset_value": net_asset_value,
             "bonus_money"   : bonus_money,
             "origin_basket_amount": origin_basket_amount,
-            "hidden_substitute_amount": round(origin_basket_amount - estimated_cash - basket_pre_close, 5),
+            "hidden_substitute_amount": hidden_substitute_amount,
             "update_date": today_str,
             "components": components,
         }
@@ -346,7 +436,7 @@ class ETFAlphaCoreConfigService:
         print(f"  net_asset_value:      {net_asset_value}")
         print(f"  bonus_money:          {bonus_money}")
         print(f"  origin_basket_amount: {origin_basket_amount}")
-        print(f"  hidden_substitute_amount:{origin_basket_amount - estimated_cash - basket_pre_close}")
+        print(f"  hidden_substitute_amount:{hidden_substitute_amount} (raw: {raw_hidden:.2f})")
         print(f"  update_date:          {today_str}")
         print(f"  components:           {len(components)} physical stocks")
 
@@ -486,8 +576,7 @@ class ETFAlphaCoreConfigService:
         for fund_code in fund_codes:
             comp_df = self._pcf_comp_cache.get(fund_code)
             if comp_df is not None and not comp_df.empty:
-                physical_df = comp_df[comp_df["SUBSTITUTION_FLAG"] != "2"]
-                for _, row in physical_df.iterrows():
+                for _, row in comp_df.iterrows():
                     raw_code = str(row["INSTRUMENT_ID"]).strip().split('.')[0]
                     market_id = str(row.get("UNDERLYION_SECURITY_ID", "")).strip()
                     if market_id == "103" or (len(raw_code) == 5 and raw_code.isdigit()):

@@ -23,8 +23,13 @@ class SsePcfProvider(PcfProvider):
         if os.path.exists(cache_file):
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:
-                    print(f"  📖 [Cache Hit] Successfully loaded local SSE ETF {fund_code} basic metadata")
-                    return json.load(f)
+                    cached_data = json.load(f)
+                    expected_date = os.path.basename(pcf_dir)
+                    if str(cached_data.get("TRADING_DAY", "")).replace("-", "") == expected_date:
+                        print(f"  📖 [Cache Hit] Successfully loaded local SSE ETF {fund_code} basic metadata")
+                        return cached_data
+                    else:
+                        print(f"  ⚠️ [Cache Stale] Local cache TRADING_DAY={cached_data.get('TRADING_DAY')} != target date {expected_date}. Re-fetching from exchange...")
             except Exception:
                 pass
 
@@ -64,8 +69,20 @@ class SsePcfProvider(PcfProvider):
         pcf_dir = self._get_pcf_dir()
         cache_file = os.path.join(pcf_dir, f"SSE_{fund_code}_comp.json")
 
+        basic_cache_file = os.path.join(pcf_dir, f"SSE_{fund_code}_basic.json")
+        basic_is_stale = False
+        expected_date = os.path.basename(pcf_dir)
+        if os.path.exists(basic_cache_file):
+            try:
+                with open(basic_cache_file, "r", encoding="utf-8") as f:
+                    b_data = json.load(f)
+                    if str(b_data.get("TRADING_DAY", "")).replace("-", "") != expected_date:
+                        basic_is_stale = True
+            except Exception:
+                pass
+
         result_list = None
-        if os.path.exists(cache_file):
+        if os.path.exists(cache_file) and not basic_is_stale:
             try:
                 with open(cache_file, "r", encoding="utf-8") as f:
                     result_list = json.load(f)

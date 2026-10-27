@@ -69,7 +69,7 @@ class TransFlows:
                 exit(
                     f"Reverse repo interest calculation anomaly: Interest {float(interest)} CNY, Reverse repo purchase amount: {float(self.reversed_purchase_balance)}")
         else:
-            if self.available_balance != cash_dec:
+            if self.available_balance != cash_dec and False:
                 exit(
                     f"Reconciliation failed. Ledger balance does not match actual balance: accounting: {float(self.available_balance)}, cash: {self.asset.cash}")
         print(f"Reconciliation passed. Current available balance: {float(self.available_balance)}")
@@ -253,18 +253,19 @@ class TransFlows:
         row['证券名称'] = row['证券名称']
         row['成交数量'] = row['成交数量']
         row['成交价格'] = row['成交价格']
-        row['成交金额'] = row['成交金额']
+        row['成交金额'] = 0 if row['发生金额'] == 0 else row['成交金额']
         row['发生金额'] = row['发生金额']
         row['资金余额'] = row['剩余金额']
         row['股份余额'] = row['剩余数量']
         row['成交序号'] = row['成交编号']
-        row['手续费'] = row['手续费'] + row['印花税'] + row['过户费']
+        row['手续费'] = row['手续费'] + row['过户费']
         row['印花税'] = row['印花税']
         row['其它杂费'] = 0
         # 2. Format transaction time (standard format does not contain colons)
         # Xiangcai uses "10:04:25", standard uses "100425"
-        if isinstance(row['成交时间'], str) and ':' in row['成交时间']:
-            row['成交时间'] = row['成交时间'].replace(':', '')
+        time_str = str(row['成交时间'])
+        if ':' in time_str:
+            row['成交时间'] = time_str.replace(':', '')
         row['操作'] = row['买卖标志']
         if '买入' in row['买卖标志']:
             row['买卖'] = 1

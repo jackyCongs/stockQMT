@@ -31,7 +31,7 @@ class Strategy2:
         # Maximum position value per single stock
         self.max_single_amount = 2200
         # Minimum capital size per single order
-        self.min_bid_amount = 1
+        self.min_bid_amount = 180
 
         self.base_premium_threshold = 0.3
         self.strategy_name = "EtfStrategy"

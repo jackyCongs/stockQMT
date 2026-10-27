@@ -272,9 +272,10 @@ class TraderStrategyService:
                 remark = f"Sell Log: {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, selling {stock_code}, premium: {premium}, " \
                           f"Appraisal: {appraisal}, Quote Price: {sell_price}, Vol: {sell_num} lots, Current Bids: {stock_info['bidPrice']}, {stock_info['bidVol']}, Index Details: {index_info}"
                 logger.info(remark)
-                # Deduct sell volume from best bid size post-quote
+                # Deduct sell volume from best bid size and usable holdings post-quote
                 bid_vol_remain = round(inner_stock_infos[stock_code]['bidVol'][0] - sell_num)
                 inner_stock_infos[stock_code]['bidVol'][0] = max(0, bid_vol_remain)
+                inner_stock_infos[stock_code]['hold_can_use_num'] = max(0, round(inner_stock_infos[stock_code]['hold_can_use_num'] - sell_num))
                 self.processor.submit_task(self.order_sell_thread, stock_code, sell_price, sell_num, stock_info, inner_stock_infos, target_index_infos, fresh_holding)
                 logger.info(f"inner_stock_info: {stock_info}")
                 logger.info(f"target_index_info: {index_info}")
@@ -335,16 +336,13 @@ class TraderStrategyService:
         logger.info(f"sell executed over {stock_code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
 
     def order_sell_then_buy_thread(self, inner_stock_infos, target_index_infos, first_buy_queue_node, first_sell_queue_node):
-        lock = self._get_lock(first_sell_queue_node.code)
         try:
             logger.info(f"order_sell_then_buy_thread start {first_buy_queue_node.code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
             self.to_sell(inner_stock_infos, target_index_infos, first_buy_queue_node.code, float(first_buy_queue_node.price), float(first_buy_queue_node.appraisal), False)
             time.sleep(1.5)
 
             logger.info(f"prepare to buy {first_sell_queue_node.code} {get_datetime().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}")
-            lock.acquire()
             self.to_buy(inner_stock_infos, target_index_infos, first_sell_queue_node.code, float(first_sell_queue_node.price), float(first_sell_queue_node.appraisal), False)
-            lock.release()
 
             time.sleep(1.5)
             self.to_cancel(first_sell_queue_node.code, first_buy_queue_node.code)
@@ -354,5 +352,3 @@ class TraderStrategyService:
         except Exception as e:
             logger.exception(f"order_sell_then_buy_thread CRASHED: {e}")
             notifier.send_telegram_alert("Alert", f"Strategy {self.strategy_name}, fatal error in handler: {str(e)[:200]},\nPlease check immediately.")
-        finally:
-            lock.release()

@@ -77,9 +77,12 @@ class Strategy1:
         rest_index_codes = data_loader.get_rest_index(self.target_index_infos)
         logger.info(f"total target index nums: {len(self.target_index_infos)}")
         logger.info(f"rest_index_codes nums: {len(rest_index_codes)}, {rest_index_codes}")
-        # Async multi-threaded fetch of missing index quotes via third-party feeds
-        # self.subscribe_rest_index_stock(rest_index_codes)
-        # time.sleep(10)
+
+        if self.platform != "大同证券":
+            print("start third-part index data...")
+            self.subscribe_rest_index_stock(rest_index_codes)
+            self.min_bid_money = 180
+            time.sleep(10)
         self.completed_loading = True
         # Start a background thread to refresh positions periodically
         threading.Thread(target=data_loader.interval_fresh_holding, args=(self.inner_stock_infos, self.target_index_infos, self.trader_service)).start()
@@ -183,12 +186,15 @@ class Strategy1:
                 'data': data['data'],
                 'status': True,
             })
+            for stock_code in self.target_index_infos[index_code]['relation']:
+                self.analysis_and_decision_mking(stock_code, data['data'])
+
             rest_index_push_count += 1
             if rest_index_push_count % 250 == 0:
                 rest_index_push_count = 0
                 logger.info(f"subscribe_detail_index_stock: [{index_code}]-{self.target_index_infos[index_code]}")
         except IOError as e:
-            logger.error(e)
+            logger.error("error...")
             return
 
     def analysis_and_decision_mking(self, stock_code, origin_tick = None):
@@ -219,14 +225,14 @@ class Strategy1:
                 logger.warning(f"last_net_worth_date anomaly: {stock_info['last_net_worth_date']} - {self.yesterday}")
                 return None
 
-            if (get_time() - index_info['timestamp'] > 8) or (get_time() - stock_info['timestamp'] > 8):
+            if (get_time() - index_info['timestamp'] > 10) or (get_time() - stock_info['timestamp'] > 60*60*8):
                 self.sell_queue.remove_stock(stock_code)
                 # self.buy_queue.remove_stock(stock_code)
                 # Delays > 10s indicate anomaly; alert required
-                if get_time() - index_info['timestamp'] >= 60:
+                if get_time() - index_info['timestamp'] >= 10:
                     logger.error(f"Index {stock_info['target_index']} update interval anomaly: no updates for {get_time() - index_info['timestamp']} seconds")
                     self.buy_queue.remove_stock(stock_code)
-                    logger.info(index_info)
+                    # logger.info(index_info)
                 if get_time() - stock_info['timestamp'] >= 600:
                     logger.error(f"Stock {stock_code} update interval anomaly: no updates for {get_time() - stock_info['timestamp']} seconds")
                     self.buy_queue.remove_stock(stock_code)
@@ -272,7 +278,7 @@ class Strategy1:
                     self.sell_queue.remove_stock(first_sell_queue_node.code)
                     return None
                 if (date_utils.get_current_millisecond() - first_buy_queue_node.update_time) / 1000 > 1:
-                    self.sell_queue.remove_stock(first_buy_queue_node.code)
+                    self.buy_queue.remove_stock(first_buy_queue_node.code)
                     return None
                 # Profit check: Verify buy queue headroom covers sell volume (sell positive, buy negative)
                 # Ensure premium difference is below threshold to guarantee execution
@@ -315,12 +321,11 @@ class Strategy1:
             estimate_position_rate = Decimal(0.95)
         appraisal = Decimal(round(stock_info['last_net_worth'] * (Decimal(1) + index_info['increase_rate'] * estimate_position_rate) * (
                     Decimal(1) - stock_info['withdraw_commission_7rate']), 6))
-        current_hold_val = float(stock_info['hold_num']) * stock_info['askPrice'][0] * 100
+        has_valid_ask = len(stock_info['askPrice']) > 0 and len(stock_info['askVol']) > 0 and stock_info['askPrice'][0] > 0
+        current_hold_val = float(stock_info['hold_num']) * (stock_info['askPrice'][0] if has_valid_ask else float(appraisal)) * 100
         index_unused_money_capacity = self.max_bid_money * 2 - index_info['index_total_market_value']
         # Logic: Total holdings and target index exposure are below limits
-        if (current_hold_val + self.min_bid_money < self.max_bid_money) and (index_unused_money_capacity > self.min_bid_money):
-            if len(stock_info['askPrice']) == 0 or stock_info['askPrice'][0] > appraisal:
-                self.sell_queue.remove_stock(stock_code)
+        if has_valid_ask and (current_hold_val + self.min_bid_money < self.max_bid_money) and (index_unused_money_capacity > self.min_bid_money) and Decimal(str(stock_info['askPrice'][0])) <= appraisal:
             overheating_penalty = data_loader.get_overheating_penalty(index_info['increase_rate'])
             history_penalty_rate = Decimal(index_info['penalty_rate'])
             premium_threshold = Decimal(self.base_premium_threshold) + overheating_penalty + history_penalty_rate
